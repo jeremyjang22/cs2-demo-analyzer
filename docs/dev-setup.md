@@ -104,7 +104,45 @@ Windows (native, PowerShell):
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-**Go (when Phase 2 arrives):** TBD.
+**Go:**
+Install via the OS package manager — Go itself is a single-binary toolchain.
+
+macOS:
+```sh
+brew install go
+```
+
+Windows (native, PowerShell):
+```powershell
+winget install GoLang.Go
+```
+Restart your terminal so `go` is on `PATH`.
+
+Windows (WSL2 Ubuntu):
+Don't use `apt install golang` — Ubuntu's package often lags by a major
+version. Use the official tarball instead:
+```sh
+# Replace x.y.z with the current stable version from https://go.dev/dl
+curl -LO https://go.dev/dl/go1.22.0.linux-amd64.tar.gz
+sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz
+echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+source ~/.bashrc
+```
+
+**Rust:**
+Install via `rustup` — works the same across all three platforms. It manages
+the Rust compiler, `cargo`, `rustfmt`, and `clippy`.
+
+macOS / WSL2:
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+Accept the default installation. After it finishes, either restart your
+shell or run `source "$HOME/.cargo/env"` to pick up `cargo` on `PATH`.
+
+Windows (native):
+Download and run `rustup-init.exe` from [rustup.rs](https://rustup.rs/).
+The installer also installs the MSVC build tools prerequisite if missing.
 
 **Node / TypeScript (when Phase 3 arrives):** TBD — likely via `fnm` or `mise`.
 
