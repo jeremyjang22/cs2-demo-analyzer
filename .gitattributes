@@ -1,0 +1,14 @@
+* text=auto eol=lf
+
+# Binary files: never touch
+*.dem      binary
+*.png      binary
+*.jpg      binary
+*.parquet  binary
+*.sqlite   binary
+*.db       binary
+
+# Platform-specific files
+*.bat      text eol=crlf
+*.ps1      text eol=crlf
+*.sh       text eol=lf

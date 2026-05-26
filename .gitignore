@@ -1,1 +1,26 @@
+# Data — never commit demo files or local databases
 data/
+*.dem
+*.sqlite
+*.db
+*.parquet
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.python-version
+
+# Go
+playground/go/bin/
+
+# Rust
+playground/rust/target/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
