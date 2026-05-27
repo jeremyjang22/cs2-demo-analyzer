@@ -34,7 +34,7 @@ def main() -> int:
     # parse_player_info() returns a pandas DataFrame with columns:
     #   steamid, name, team_number
     players = parser.parse_player_info()
-    print("\nPlayers:")
+    print("\n== Players ==")
     for _, row in players.iterrows():
         name = row.get("name", "<unknown>")
         steamid = row.get("steamid", "<unknown>")
@@ -56,21 +56,51 @@ def main() -> int:
             )
 
     # --- First live-round tick ---
-    # The most reliable marker is the round_freeze_end game event: it fires
-    # exactly when the freeze period ends and free play begins each round.
-    # The very first round_freeze_end is the start of the first live round.
+    # CS2 fires round_freeze_end during warmup too, so the smallest such tick
+    # is a warmup-era event, not the first competitive round.
+    #
+    # Strategy: locate the tick where the actual match begins via
+    # begin_new_match, then take the first round_freeze_end AFTER that tick.
+    #
+    # begin_new_match fires twice in a typical FACEIT demo:
+    #   - once at tick 0 (a demo-start artifact)
+    #   - once at the real match start (after the warmup-end knife round or
+    #     ready-up phase)
+    # We use the maximum begin_new_match tick as the warmup-end floor.
     print("\n== First live-round tick ==")
     freeze_end_df = parser.parse_event("round_freeze_end")
     if len(freeze_end_df) == 0:
         print("  (no round_freeze_end events found — cannot determine first live tick)")
         return 0
 
-    first_live_tick = int(freeze_end_df["tick"].min())
+    match_start_df = parser.parse_event("begin_new_match")
+    if len(match_start_df) == 0:
+        # Fallback: no begin_new_match found — use smallest round_freeze_end,
+        # but note it may land inside warmup.
+        match_start_tick = 0
+        print("  WARNING: begin_new_match not found; live-round anchor may be warmup-era")
+    else:
+        # Take the largest tick (ignores the tick-0 demo artifact).
+        match_start_tick = int(match_start_df["tick"].max())
+
+    live_freeze_ends = freeze_end_df[freeze_end_df["tick"] > match_start_tick]
+    if len(live_freeze_ends) == 0:
+        print(
+            f"  WARNING: no round_freeze_end after begin_new_match "
+            f"(tick {match_start_tick}); falling back to global minimum"
+        )
+        first_live_tick = int(freeze_end_df["tick"].min())
+    else:
+        first_live_tick = int(live_freeze_ends["tick"].min())
+
     positions = parser.parse_ticks(
         ["X", "Y", "Z", "name"],
         ticks=[first_live_tick],
     )
-    print(f"Tick: {first_live_tick}  (first round_freeze_end)")
+    print(
+        f"Tick: {first_live_tick}  "
+        f"(first round_freeze_end after begin_new_match at tick {match_start_tick})"
+    )
     if len(positions) == 0:
         print("  (no position rows at that tick)")
     else:

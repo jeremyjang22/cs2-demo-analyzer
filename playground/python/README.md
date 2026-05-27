@@ -16,10 +16,23 @@ Output:
 
 ## Where the "live-round" filter lives
 
-`src/hello_demo.py`, search for `parse_event("round_freeze_end")`. The
-first tick in that DataFrame is used as the live-round anchor. This is
-more reliable than scanning the `game_phase` tick prop because
-`round_freeze_end` fires exactly once per round when buy-time ends.
+`src/hello_demo.py`, search for `parse_event("round_freeze_end")`.
+
+`round_freeze_end` fires during warmup rounds too, so using the global
+minimum tick would anchor analysis inside warmup — which would skew any
+round-relative calculations.
+
+Instead, the code:
+1. Parses `begin_new_match` events and takes the **maximum** tick (the
+   tick-0 occurrence at demo start is a known artifact; the later one
+   marks the real match start after the warmup phase).
+2. Filters `round_freeze_end` to events **after** that tick.
+3. Uses the minimum of those remaining events as the live-round anchor.
+
+In the `mega_ot_mirage.dem` reference demo, `begin_new_match` fires at
+tick 2543 (real match start) and the resulting live-round anchor is tick
+4238 — versus the warmup-era tick 1279 that the old code would have
+used.
 
 ## API notes (demoparser2 v0.41.x)
 
