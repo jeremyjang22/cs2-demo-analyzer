@@ -48,6 +48,17 @@ is now surfaced via net-message handlers:
 FACEIT demos tested here do not include a `CDemoFileInfo` message, so
 playback tick count and time come from `TickRate()` and `CurrentTime()`.
 
+## Go shows 11 players, Python shows 10 — SourceTV
+
+When listing participants, Go's demoinfocs exposes 11 entries for a standard
+10-player match. The extra entry is `SourceTV (0)` — the observer/replay bot
+embedded in every CS2 server. demoinfocs's `Participants().All()` includes it,
+while Python's demoparser2 filters it out automatically.
+
+This is the kind of cross-library difference the playground is designed to
+surface. The Go code intentionally does not filter SourceTV so the discrepancy
+stays visible.
+
 ## Why a binary in `cmd/hello-demo/`
 
 Standard Go layout — `cmd/<name>/main.go` per binary, leaving room for

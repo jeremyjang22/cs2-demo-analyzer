@@ -73,9 +73,13 @@ func main() {
 	printPositions := func(label string) {
 		fmt.Printf("\n== %s ==\n", label)
 		fmt.Printf("Tick: %d\n", parser.GameState().IngameTick())
-		for _, p := range parser.GameState().Participants().Playing() {
+		players := parser.GameState().Participants().Playing()
+		for _, p := range players {
 			pos := p.Position()
 			fmt.Printf("  %-24s  x=%8.1f  y=%8.1f  z=%8.1f\n", p.Name, pos.X, pos.Y, pos.Z)
+		}
+		if len(players) == 0 {
+			fmt.Println("  (game state not yet populated — demoinfocs backfills positions only after subsequent ticks)")
 		}
 	}
 
