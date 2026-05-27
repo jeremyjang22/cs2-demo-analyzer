@@ -245,6 +245,7 @@ fn parse_events(
     huf: &Vec<(u8, u8)>,
 ) -> Result<Vec<demoparser::second_pass::game_events::GameEvent>, String> {
     let mut inputs = base_inputs(huf);
+    inputs.only_header = false;
     inputs.wanted_events = vec![
         "round_freeze_end".to_string(),
         "begin_new_match".to_string(),
@@ -261,6 +262,7 @@ fn parse_positions_at_tick(
     tick: i32,
 ) -> Result<Vec<PositionRow>, String> {
     let mut inputs = base_inputs(huf);
+    inputs.only_header = false;
     inputs.wanted_player_props = vec![
         "X".to_string(),
         "Y".to_string(),
