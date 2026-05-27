@@ -1,6 +1,6 @@
 module github.com/jeremyjang22/cs2-demo-analyzer/playground/go
 
-go 1.26.3
+go 1.26
 
 require github.com/markus-wa/demoinfocs-golang/v5 v5.2.0
 

@@ -15,8 +15,9 @@ Or in one shot:
 go run ./cmd/hello-demo ../../data/mega_ot_mirage.dem
 ```
 
-Output mirrors the Python and Rust playgrounds: header, players, tick-0
-positions, first-live-round-tick positions, and a playback summary.
+Output has the same five sections as the Python playground (Header,
+Players, Tick 0, First live-round tick, Playback Info) but in a
+slightly different order — see "Section ordering" below.
 
 ## Where the "live-round" filter lives
 
@@ -58,6 +59,25 @@ while Python's demoparser2 filters it out automatically.
 This is the kind of cross-library difference the playground is designed to
 surface. The Go code intentionally does not filter SourceTV so the discrepancy
 stays visible.
+
+## Section ordering — Go vs Python
+
+Go's output order is:
+
+1. `== Header ==`
+2. `== Tick 0 (raw first tick) ==`  (empty — game state not yet populated)
+3. `== Players ==`
+4. `== First live-round tick ==`
+5. `== Playback Info ==`
+
+Python's order is Header → Players → Tick 0 → First live-round tick.
+The divergence is structural: demoparser2 parses the whole demo up
+front and prints in any order it likes, while demoinfocs streams and
+must print things as it learns them. The earliest reliable moment for
+"who is playing" in demoinfocs is `AnnouncementMatchStarted` — which
+fires after the first FrameDone, so Players ends up landing after
+the empty Tick 0 section. Treat the ordering as another cross-library
+finding the playground is meant to surface.
 
 ## Why a binary in `cmd/hello-demo/`
 

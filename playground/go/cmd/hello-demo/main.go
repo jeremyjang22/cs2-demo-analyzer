@@ -65,6 +65,7 @@ func main() {
 	// --- State for the interesting ticks ---
 	var (
 		headerPrinted    bool
+		playersPrinted   bool
 		tick0Printed     bool
 		liveTickPrinted  bool
 		announcementSeen bool // floor: AnnouncementMatchStarted must have fired
@@ -83,7 +84,11 @@ func main() {
 		}
 	}
 
-	// Print header info on the first FrameDone after CDemoFileHeader has fired.
+	// Header prints on the first FrameDone after CDemoFileHeader has fired.
+	// Tick 0 ("raw first tick") prints on the same first FrameDone so it
+	// genuinely shows frame-0 state — even though that state is empty,
+	// the section's whole point is to surface that emptiness as a
+	// cross-library finding versus demoparser2's back-filled tick 0.
 	parser.RegisterEventHandler(func(e events.FrameDone) {
 		if !headerPrinted && mapName != "" {
 			fmt.Println("== Header ==")
@@ -100,8 +105,21 @@ func main() {
 	// AnnouncementMatchStarted is the reliable "warmup is over, match is real"
 	// signal. It fires at tick ~1279 in mega_ot_mirage.dem (earlier than the
 	// second MatchStart at tick 2543 which is the actual first competitive round).
+	// We also use it as the moment to print Players, since by then the
+	// game-state entities (including names and steam IDs) are populated.
 	parser.RegisterEventHandler(func(e events.AnnouncementMatchStarted) {
 		announcementSeen = true
+		if !playersPrinted {
+			// SourceTV is included intentionally — surfaces a cross-library
+			// difference (demoparser2 filters it; demoinfocs exposes it).
+			fmt.Println("\n== Players ==")
+			all := parser.GameState().Participants().All()
+			for _, p := range all {
+				fmt.Printf("  - %s  (%d)\n", p.Name, p.SteamID64)
+			}
+			fmt.Printf("  (%d total)\n", len(all))
+			playersPrinted = true
+		}
 	})
 
 	// First non-warmup RoundStart after AnnouncementMatchStarted.
@@ -112,14 +130,6 @@ func main() {
 		if parser.GameState().IsWarmupPeriod() {
 			return
 		}
-
-		// Print players here — guaranteed to be populated at this point.
-		fmt.Println("\n== Players ==")
-		all := parser.GameState().Participants().All()
-		for _, p := range all {
-			fmt.Printf("  - %s  (%d)\n", p.Name, p.SteamID64)
-		}
-		fmt.Printf("  (%d total)\n", len(all))
 
 		printPositions("First live-round tick")
 		liveTickPrinted = true
