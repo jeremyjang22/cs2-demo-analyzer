@@ -5,7 +5,7 @@ CS2 demo exploration using [demoinfocs-golang](https://github.com/markus-wa/demo
 ## Run
 
 ```sh
-go build -o bin/hello-demo ./cmd/hello-demo
+go build -o bin/hello-demo.exe ./cmd/hello-demo
 ./bin/hello-demo ../../data/mega_ot_mirage.dem
 ```
 
