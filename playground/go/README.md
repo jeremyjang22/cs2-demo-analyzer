@@ -19,6 +19,27 @@ Output has the same five sections as the Python playground (Header,
 Players, Tick 0, First live-round tick, Playback Info) but in a
 slightly different order — see "Section ordering" below.
 
+## track-player
+
+Follows a single player through the whole demo and reports their
+behavior: per-round K/D/A, damage, accuracy, grenade usage, economy,
+distance moved, plus aggregate breakdowns (kills by weapon, hit
+locations, most-visited map areas) and a timestamped event log.
+
+```sh
+go build -o bin/track-player.exe ./cmd/track-player
+./bin/track-player.exe ../../data/05-11-2026_mirage_44-32-10.dem solitude
+```
+
+The second argument is a case-insensitive name substring or an exact
+SteamID64. Live-round gating reuses the hello-demo strategy
+(`AnnouncementMatchStarted` floor + `IsWarmupPeriod()` guard).
+
+Known quirks on FACEIT demos: `PlayerJump` and `RoundMVPAnnouncement`
+never fire (both report 0), and the assist count can differ by ±1 from
+the scoreboard in the demo filename — likely a flash-assist counting
+difference.
+
 ## Where the "live-round" filter lives
 
 `cmd/hello-demo/main.go`, search for `AnnouncementMatchStarted`.
