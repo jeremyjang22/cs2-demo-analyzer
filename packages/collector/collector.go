@@ -30,6 +30,15 @@ type Collector struct {
 	// See its doc comment for why this happens.
 	tickGuard sampleGuard
 
+	// timeout tracking: pollTimeout watches the game-rules timeout flags
+	// across every frame. timeoutTActive/timeoutCTActive are the last
+	// observed level state, used to detect the rising edge. pendingTimeout*
+	// holds a team whose timeout was observed while no round was open yet,
+	// to be consumed by the next roundStart. See pollTimeout's doc comment.
+	timeoutTActive, timeoutCTActive bool
+	pendingTimeoutTeam              common.Team
+	havePendingTimeout              bool
+
 	nRounds int
 	nTicks  int64
 	err     error // first sink error; aborts the parse
@@ -132,7 +141,7 @@ func (c *Collector) register() {
 		c.asm.roundStart(c.tick(), int32(c.parser.GameState().TotalRoundsPlayed()+1))
 		c.vel.reset()       // players teleport to spawn; prior positions are meaningless
 		c.tickGuard.reset() // new round: the first tick sampled in it must never be treated as a repeat
-		c.readTimeout()
+		c.consumePendingTimeout()
 	})
 
 	c.parser.RegisterEventHandler(func(events.RoundFreezetimeEnd) {
@@ -160,6 +169,7 @@ func (c *Collector) register() {
 	})
 
 	c.parser.RegisterEventHandler(func(events.FrameDone) {
+		c.pollTimeout()
 		c.sampleFrame()
 	})
 }
@@ -215,6 +225,14 @@ func (c *Collector) sampleFrame() {
 		}
 		if w := p.ActiveWeapon(); w != nil {
 			t.ActiveWeapon = w.String()
+			// Players holding nothing (rare) and spectators both surface as a
+			// nil weapon or a nil Entity on it; degrade to zero rather than
+			// failing the run.
+			if w.Entity != nil {
+				if v, ok := w.Entity.PropertyValue("m_fAccuracyPenalty"); ok {
+					t.AccuracyPenalty = v.Float()
+				}
+			}
 		}
 
 		c.readPawnProps(p, &t)
@@ -222,9 +240,11 @@ func (c *Collector) sampleFrame() {
 	}
 }
 
-// readPawnProps pulls the three properties demoinfocs does not wrap. Missing
-// properties degrade to zero rather than failing the run - a demo from a
-// different CS2 build may not carry all of them.
+// readPawnProps pulls the two pawn properties demoinfocs does not wrap.
+// Missing properties degrade to zero rather than failing the run - a demo
+// from a different CS2 build may not carry all of them. AccuracyPenalty is
+// read separately in sampleFrame, off the active weapon's entity rather than
+// the pawn's.
 func (c *Collector) readPawnProps(p *common.Player, t *PlayerTick) {
 	ent := p.PlayerPawnEntity()
 	if ent == nil {
@@ -232,9 +252,6 @@ func (c *Collector) readPawnProps(p *common.Player, t *PlayerTick) {
 	}
 	if v, ok := ent.PropertyValue("m_iShotsFired"); ok {
 		t.ShotsFired = int16(v.Int())
-	}
-	if v, ok := ent.PropertyValue("m_pMovementServices.m_flMaxspeed"); ok {
-		t.MaxSpeed = v.Float()
 	}
 	if v, ok := ent.PropertyValue("m_pCameraServices.m_vecCsViewPunchAngle"); ok {
 		punch := v.R3Vec()
@@ -276,10 +293,32 @@ func (c *Collector) markSurvivors() {
 	}
 }
 
-// readTimeout reads timeout state from the game rules entity. demoinfocs has no
-// timeout support (see datatables.go:1279 "TODO: timeout data"), but the raw
-// properties are present.
-func (c *Collector) readTimeout() {
+// pollTimeout watches timeout state on the game rules entity across every
+// frame. demoinfocs has no timeout support (see datatables.go:1279 "TODO:
+// timeout data"), but the raw properties are present - reachable only under
+// the "m_pGameRules" prefix demoinfocs resolves every game-rules property
+// through (confirmed empirically: the unprefixed names always report
+// ok=false; "m_pGameRules.m_bTerroristTimeOutActive" and
+// "m_pGameRules.m_bCTTimeOutActive" resolve fine).
+//
+// A timeout is a window, not an instant, so this can't be a single read at
+// RoundStart: it has to watch the flag's transitions across every frame and
+// fire on the rising edge (false -> true), once per timeout, remembering
+// which team called it.
+//
+// Empirically (mega_ot_mirage.dem), demoinfocs fires RoundEndOfficial and the
+// next RoundStart back to back on the same tick - well before that next
+// round's freezetime actually elapses - so by the time a timeout's flag goes
+// high, the round it precedes has *usually already opened*. In both real
+// timeouts in that demo, the rising edge landed a few ticks after the
+// enclosing round's RoundStart and the falling edge landed before that
+// round's RoundFreezetimeEnd: the timeout sits inside that round's
+// freezetime, not in a gap between RoundEndOfficial and RoundStart. So the
+// rising edge is attributed to whatever round is currently open, if any. If
+// none is open yet (the ordering the original design doc assumed, and the
+// only case where "wait for the next round" is the right shape), the team is
+// queued and consumed by the next roundStart - see the RoundStart handler.
+func (c *Collector) pollTimeout() {
 	rules := c.parser.GameState().Rules()
 	if rules == nil {
 		return
@@ -288,13 +327,48 @@ func (c *Collector) readTimeout() {
 	if ent == nil {
 		return
 	}
-	if v, ok := ent.PropertyValue("m_bTerroristTimeOutActive"); ok && v.BoolVal() {
-		c.asm.setTimeout(common.TeamTerrorists)
+
+	tActive := false
+	if v, ok := ent.PropertyValue("m_pGameRules.m_bTerroristTimeOutActive"); ok {
+		tActive = v.BoolVal()
+	}
+	ctActive := false
+	if v, ok := ent.PropertyValue("m_pGameRules.m_bCTTimeOutActive"); ok {
+		ctActive = v.BoolVal()
+	}
+
+	if tActive && !c.timeoutTActive {
+		c.onTimeoutCalled(common.TeamTerrorists)
+	}
+	if ctActive && !c.timeoutCTActive {
+		c.onTimeoutCalled(common.TeamCounterTerrorists)
+	}
+	c.timeoutTActive, c.timeoutCTActive = tActive, ctActive
+}
+
+// onTimeoutCalled runs once, on the rising edge of a team's timeout flag.
+func (c *Collector) onTimeoutCalled(team common.Team) {
+	if c.asm.active() {
+		c.asm.setTimeout(team)
 		return
 	}
-	if v, ok := ent.PropertyValue("m_bCTTimeOutActive"); ok && v.BoolVal() {
-		c.asm.setTimeout(common.TeamCounterTerrorists)
+	c.pendingTimeoutTeam = team
+	c.havePendingTimeout = true
+}
+
+// consumePendingTimeout applies a timeout queued by onTimeoutCalled (observed
+// while no round was open) to the round that just opened, and clears the
+// pending state so it is never applied to more than one round. Called from
+// the RoundStart handler, after asm.roundStart. A no-op when nothing is
+// pending, which is the common case in mega_ot_mirage.dem where the rising
+// edge is observed after the round has already opened and onTimeoutCalled
+// applies it directly instead of queuing it.
+func (c *Collector) consumePendingTimeout() {
+	if !c.havePendingTimeout {
+		return
 	}
+	c.asm.setTimeout(c.pendingTimeoutTeam)
+	c.havePendingTimeout = false
 }
 
 // includeParticipant reports whether p is a real player worth sampling.

@@ -192,6 +192,56 @@ func TestEventsBeforeRoundStartAreIgnored(t *testing.T) {
 	}
 }
 
+// setTimeout is how the Collector attributes an observed timeout to a round.
+// It must land on Meta.TimeoutBefore/TimeoutTeam of the round that is
+// eventually emitted, not get lost or silently apply to the wrong round.
+func TestSetTimeoutMarksRound(t *testing.T) {
+	a, got := collect()
+
+	a.roundStart(1000, 1)
+	a.setTimeout(common.TeamTerrorists)
+	a.freezeEnd(2000, nil)
+	a.roundEnd(3000, common.TeamTerrorists, events.RoundEndReasonTerroristsWin)
+	a.roundEndOfficial(3300)
+
+	if len(*got) != 1 {
+		t.Fatalf("emitted %d rounds, want 1", len(*got))
+	}
+	m := (*got)[0].Meta
+	if !m.TimeoutBefore {
+		t.Error("TimeoutBefore = false, want true")
+	}
+	if m.TimeoutTeam != common.TeamTerrorists {
+		t.Errorf("TimeoutTeam = %v, want T", m.TimeoutTeam)
+	}
+}
+
+// A round with no timeout must not carry a stray TimeoutBefore=true - the
+// zero value must survive untouched when setTimeout is never called.
+func TestNoTimeoutLeavesTimeoutBeforeFalse(t *testing.T) {
+	a, got := collect()
+
+	a.roundStart(1000, 1)
+	a.freezeEnd(2000, nil)
+	a.roundEnd(3000, common.TeamTerrorists, events.RoundEndReasonTerroristsWin)
+	a.roundEndOfficial(3300)
+
+	if (*got)[0].Meta.TimeoutBefore {
+		t.Error("TimeoutBefore = true, want false when setTimeout was never called")
+	}
+}
+
+// setTimeout with no round open (e.g. called speculatively before the first
+// RoundStart) must not panic - mirrors the nil guard every other assembler
+// method has.
+func TestSetTimeoutNoOpWithNoRoundOpen(t *testing.T) {
+	a, got := collect()
+	a.setTimeout(common.TeamCounterTerrorists) // must not panic
+	if len(*got) != 0 {
+		t.Fatalf("emitted %d rounds, want 0", len(*got))
+	}
+}
+
 func TestAppendTickOnlyWhenRoundOpen(t *testing.T) {
 	a, got := collect()
 

@@ -84,6 +84,98 @@ func TestOnRoundAppendsMultipleConsumers(t *testing.T) {
 	}
 }
 
+// onTimeoutCalled is the rising-edge handler pollTimeout calls. When a round
+// is already open (the case actually observed against mega_ot_mirage.dem -
+// demoinfocs fires RoundStart well before that round's freezetime elapses,
+// so a timeout's flag typically goes high after the enclosing round has
+// already started), the timeout must land on that round immediately rather
+// than waiting for a RoundStart that would attribute it one round too late.
+func TestOnTimeoutCalledAppliesImmediatelyWhenRoundOpen(t *testing.T) {
+	var got []*Round
+	c := &Collector{asm: newAssembler(func(r *Round) { got = append(got, r) })}
+	c.asm.roundStart(1000, 1)
+
+	c.onTimeoutCalled(common.TeamTerrorists)
+
+	if c.havePendingTimeout {
+		t.Error("havePendingTimeout = true, want false (should apply immediately, not queue, when a round is open)")
+	}
+	c.asm.freezeEnd(2000, nil)
+	c.asm.roundEndOfficial(2300)
+	if len(got) != 1 {
+		t.Fatalf("emitted %d rounds, want 1", len(got))
+	}
+	if !got[0].Meta.TimeoutBefore || got[0].Meta.TimeoutTeam != common.TeamTerrorists {
+		t.Errorf("round meta = %+v, want TimeoutBefore=true TimeoutTeam=T", got[0].Meta)
+	}
+}
+
+// If the flag rises with no round open yet - the ordering the original
+// design doc assumed - the team must be queued rather than dropped, since
+// asm.setTimeout is itself a no-op with no round open.
+func TestOnTimeoutCalledQueuesWhenNoRoundOpen(t *testing.T) {
+	c := &Collector{asm: newAssembler(func(*Round) {})}
+
+	c.onTimeoutCalled(common.TeamCounterTerrorists)
+
+	if !c.havePendingTimeout {
+		t.Fatal("havePendingTimeout = false, want true (timeout observed with no round open must be queued)")
+	}
+	if c.pendingTimeoutTeam != common.TeamCounterTerrorists {
+		t.Errorf("pendingTimeoutTeam = %v, want CT", c.pendingTimeoutTeam)
+	}
+}
+
+// consumePendingTimeout is what the RoundStart handler calls to apply a
+// queued timeout to the round that just opened, and it must clear the queue
+// so the same timeout is never attributed to a second round.
+func TestConsumePendingTimeoutAppliesOnceThenClears(t *testing.T) {
+	var got []*Round
+	c := &Collector{asm: newAssembler(func(r *Round) { got = append(got, r) })}
+	c.onTimeoutCalled(common.TeamTerrorists) // no round open yet: queues
+
+	c.asm.roundStart(1000, 1)
+	c.consumePendingTimeout()
+	c.asm.freezeEnd(2000, nil)
+	c.asm.roundEndOfficial(2300)
+
+	if c.havePendingTimeout {
+		t.Error("havePendingTimeout = true after consumePendingTimeout, want false")
+	}
+	if !got[0].Meta.TimeoutBefore || got[0].Meta.TimeoutTeam != common.TeamTerrorists {
+		t.Errorf("round 1 meta = %+v, want TimeoutBefore=true TimeoutTeam=T", got[0].Meta)
+	}
+
+	// A second round opening after the queue was cleared must NOT inherit
+	// the first round's timeout.
+	c.asm.roundStart(3000, 2)
+	c.consumePendingTimeout()
+	c.asm.freezeEnd(4000, nil)
+	c.asm.roundEndOfficial(4300)
+
+	if len(got) != 2 {
+		t.Fatalf("emitted %d rounds, want 2", len(got))
+	}
+	if got[1].Meta.TimeoutBefore {
+		t.Error("round 2 TimeoutBefore = true, want false (one timeout must not attribute to multiple rounds)")
+	}
+}
+
+// consumePendingTimeout with nothing queued must not mark the round.
+func TestConsumePendingTimeoutNoOpWhenNothingPending(t *testing.T) {
+	var got []*Round
+	c := &Collector{asm: newAssembler(func(r *Round) { got = append(got, r) })}
+	c.asm.roundStart(1000, 1)
+
+	c.consumePendingTimeout()
+
+	c.asm.freezeEnd(2000, nil)
+	c.asm.roundEndOfficial(2300)
+	if got[0].Meta.TimeoutBefore {
+		t.Error("TimeoutBefore = true, want false when nothing was pending")
+	}
+}
+
 // SetTickRate must reach the velocity tracker the Collector was constructed
 // with, not a copy - otherwise wiring it up from main.go would be a no-op.
 func TestCollectorSetTickRateReachesVelocityTracker(t *testing.T) {

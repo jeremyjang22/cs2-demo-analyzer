@@ -23,8 +23,18 @@ type PlayerTick struct {
 	// any gap (death, respawn), where there is no predecessor to difference against.
 	VelX, VelY, VelZ float32
 	Speed            float32 // XY magnitude, units/sec; Z excluded so jumps don't inflate it
-	MaxSpeed         float32 // m_flMaxspeed - varies by weapon; Speed/MaxSpeed is comparable
-	VelValid         bool
+
+	// AccuracyPenalty is the active weapon's live inaccuracy
+	// (m_fAccuracyPenalty): higher means less accurate. It rises while firing
+	// or moving and decays toward 0 when still, making it the most direct
+	// spray-quality signal available in the data. A spike against
+	// mega_ot_mirage.dem proved the alternative - the player pawn's
+	// m_pMovementServices.m_flMaxspeed - is a static 260.00 for every weapon
+	// (knife, pistols, rifles, grenades), so it carries no information and was
+	// dropped rather than kept as a dead column.
+	AccuracyPenalty float32
+
+	VelValid bool
 
 	Buttons uint64 // raw input bitmask - see common.ButtonBitMask
 
@@ -45,7 +55,7 @@ func TickColumns() []string {
 	return []string{
 		"round", "tick", "phase", "steamid", "team",
 		"x", "y", "z", "yaw", "pitch",
-		"vel_x", "vel_y", "vel_z", "speed", "max_speed", "vel_valid",
+		"vel_x", "vel_y", "vel_z", "speed", "accuracy_penalty", "vel_valid",
 		"buttons", "shots_fired", "punch_yaw", "punch_pitch",
 		"is_ducking", "is_walking", "is_airborne", "is_scoped",
 		"health", "armor", "is_alive", "flash_remaining",
@@ -65,7 +75,7 @@ func (t *PlayerTick) AppendRow(dst []string) []string {
 		f32(t.X), f32(t.Y), f32(t.Z),
 		f32(t.Yaw), f32(t.Pitch),
 		f32(t.VelX), f32(t.VelY), f32(t.VelZ),
-		f32(t.Speed), f32(t.MaxSpeed),
+		f32(t.Speed), f32(t.AccuracyPenalty),
 		b(t.VelValid),
 		strconv.FormatUint(t.Buttons, 10),
 		strconv.Itoa(int(t.ShotsFired)),
