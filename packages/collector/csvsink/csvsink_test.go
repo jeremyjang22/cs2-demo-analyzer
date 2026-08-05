@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/jeremyjang22/cs2-demo-analyzer/packages/collector"
+	"github.com/markus-wa/demoinfocs-golang/v5/pkg/demoinfocs/common"
+	"github.com/markus-wa/demoinfocs-golang/v5/pkg/demoinfocs/events"
 )
 
 func testRound() *collector.Round {
@@ -25,6 +27,33 @@ func testRound() *collector.Round {
 			{Round: 1, Tick: 2002, SteamID: 7, X: 110, Y: 200, Z: 50, Speed: 250, IsAlive: true},
 		},
 	}
+}
+
+func readCSV(t *testing.T, path string) [][]string {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	defer f.Close()
+	rows, err := csv.NewReader(f).ReadAll()
+	if err != nil {
+		t.Fatalf("csv %s: %v", path, err)
+	}
+	return rows
+}
+
+// rowByHeader zips a header row and a data row into a map, so a test can
+// assert on a column by name rather than by position. This is deliberately
+// the opposite of how csvsink itself writes rows (by position): if csvsink's
+// positional writes and RoundColumns()/RoundPlayerColumns() ever drift apart,
+// values land under the wrong header name and the assertions below catch it.
+func rowByHeader(header, row []string) map[string]string {
+	m := make(map[string]string, len(header))
+	for i, name := range header {
+		m[name] = row[i]
+	}
+	return m
 }
 
 func readGzCSV(t *testing.T, path string) [][]string {
@@ -148,5 +177,227 @@ func TestRoundPlayersRowsWritten(t *testing.T) {
 	rows, _ := csv.NewReader(f).ReadAll()
 	if len(rows) != 2 { // header + 1 player
 		t.Fatalf("round_players.csv has %d rows, want 2", len(rows))
+	}
+}
+
+// The complete latch must stay poisoned once any round is incomplete, even if
+// later rounds in the same run are complete. This guards against a future
+// refactor that recomputes the flag per round (e.g. `s.complete = m.Complete`)
+// instead of latching it once and never clearing it.
+func TestCompleteLatchStaysFalseAcrossRounds(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(dir, Meta{DemoFile: "test.dem", Map: "de_mirage", TickRate: 64})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	incomplete := testRound()
+	incomplete.Meta.Number = 1
+	incomplete.Meta.Complete = false
+	if err := s.Round(incomplete); err != nil {
+		t.Fatalf("Round(incomplete): %v", err)
+	}
+
+	complete := testRound()
+	complete.Meta.Number = 2
+	complete.Meta.Complete = true
+	if err := s.Round(complete); err != nil {
+		t.Fatalf("Round(complete): %v", err)
+	}
+
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var m manifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	if m.Complete {
+		t.Error("manifest Complete = true, want false: an earlier incomplete round must stay latched even after a later complete round")
+	}
+}
+
+// Close() must attempt every flush and close, in order, even when an early
+// one fails, so a late failure doesn't abandon output that was otherwise
+// fine. We force the failure by closing s.ticksFile out from under the sink
+// before calling Close(): the ticks stream's flush/gzip-close/file-close
+// sequence will then error, and Close() must still flush and close
+// rounds.csv and round_players.csv afterward.
+//
+// If the Finding 1 fix were reverted (each error check in Close() returning
+// immediately), this test fails because rounds.csv would never be flushed:
+// its Flush()/Close() calls live after the ticks section that now errors
+// first, so the file would exist but be empty (header only, or not even
+// that, depending on buffering).
+func TestCloseSalvagesLaterStreamsAfterEarlyFailure(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(dir, Meta{DemoFile: "test.dem", Map: "de_mirage", TickRate: 64})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := s.Round(testRound()); err != nil {
+		t.Fatalf("Round: %v", err)
+	}
+
+	// Force the ticks stream to fail during Close() by closing its
+	// underlying file early. Writes/closes against an already-closed
+	// *os.File return an error rather than panicking, so this reliably
+	// makes the ticks section of Close() fail without touching the
+	// rounds/round_players files at all.
+	if err := s.ticksFile.Close(); err != nil {
+		t.Fatalf("pre-closing ticksFile: %v", err)
+	}
+
+	if err := s.Close(); err == nil {
+		t.Fatal("Close() = nil error, want non-nil after forcing a ticks failure")
+	}
+
+	rows := readCSV(t, filepath.Join(dir, "rounds.csv"))
+	if len(rows) != 2 { // header + 1 round
+		t.Fatalf("rounds.csv has %d rows, want 2 (rounds.csv must still be flushed despite the earlier ticks failure)", len(rows))
+	}
+
+	rpRows := readCSV(t, filepath.Join(dir, "round_players.csv"))
+	if len(rpRows) != 2 { // header + 1 player
+		t.Fatalf("round_players.csv has %d rows, want 2 (round_players.csv must still be flushed despite the earlier ticks failure)", len(rpRows))
+	}
+}
+
+// distinctiveRound returns a round whose field values are all pairwise
+// distinct (and non-zero) within each written row, so that a column
+// transposition in Round() shows up as a mismatched value rather than
+// silently matching by coincidence.
+func distinctiveRound() *collector.Round {
+	return &collector.Round{
+		Meta: collector.RoundMeta{
+			Number:          21,
+			StartTick:       32,
+			FreezeEndTick:   43,
+			EndTick:         54,
+			OfficialEndTick: 65,
+			Winner:          common.TeamCounterTerrorists,     // 3
+			Reason:          events.RoundEndReasonBombDefused, // 7
+			TimeoutBefore:   false,                            // "0"
+			TimeoutTeam:     common.TeamTerrorists,            // 2
+			Complete:        true,                             // "1"
+			Players: []collector.PlayerRound{
+				{
+					SteamID:               76561198000000123,
+					Team:                  common.TeamTerrorists, // 2
+					MoneyAtFreezeEnd:      4800,
+					EquipValueAtFreezeEnd: 3350,
+					Survived:              true, // "1"
+				},
+			},
+		},
+		// 9 ticks so tick_rows ("9") doesn't collide with any other value
+		// in the rounds.csv row above.
+		Ticks: make([]collector.PlayerTick, 9),
+	}
+}
+
+func TestRoundsCSVHeaderMatchesRoundColumns(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := New(dir, Meta{DemoFile: "test.dem", Map: "de_mirage", TickRate: 64})
+	s.Round(distinctiveRound())
+	s.Close()
+
+	rows := readCSV(t, filepath.Join(dir, "rounds.csv"))
+	if len(rows) < 1 {
+		t.Fatalf("rounds.csv has no rows")
+	}
+	want := collector.RoundColumns()
+	if len(rows[0]) != len(want) {
+		t.Fatalf("rounds.csv header has %d columns, want %d", len(rows[0]), len(want))
+	}
+	for i := range want {
+		if rows[0][i] != want[i] {
+			t.Errorf("rounds.csv column %d = %q, want %q", i, rows[0][i], want[i])
+		}
+	}
+}
+
+func TestRoundsCSVValuesLandInClaimedColumns(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := New(dir, Meta{DemoFile: "test.dem", Map: "de_mirage", TickRate: 64})
+	s.Round(distinctiveRound())
+	s.Close()
+
+	rows := readCSV(t, filepath.Join(dir, "rounds.csv"))
+	if len(rows) != 2 { // header + 1 round
+		t.Fatalf("rounds.csv has %d rows, want 2", len(rows))
+	}
+	got := rowByHeader(rows[0], rows[1])
+
+	want := map[string]string{
+		"number":            "21",
+		"start_tick":        "32",
+		"freeze_end_tick":   "43",
+		"end_tick":          "54",
+		"official_end_tick": "65",
+		"winner":            "3",
+		"reason":            "7",
+		"timeout_before":    "0",
+		"timeout_team":      "2",
+		"complete":          "1",
+		"tick_rows":         "9",
+	}
+	for col, wantVal := range want {
+		if got[col] != wantVal {
+			t.Errorf("rounds.csv column %q = %q, want %q", col, got[col], wantVal)
+		}
+	}
+}
+
+func TestRoundPlayersCSVHeaderMatchesRoundPlayerColumns(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := New(dir, Meta{DemoFile: "test.dem", Map: "de_mirage", TickRate: 64})
+	s.Round(distinctiveRound())
+	s.Close()
+
+	rows := readCSV(t, filepath.Join(dir, "round_players.csv"))
+	if len(rows) < 1 {
+		t.Fatalf("round_players.csv has no rows")
+	}
+	want := collector.RoundPlayerColumns()
+	if len(rows[0]) != len(want) {
+		t.Fatalf("round_players.csv header has %d columns, want %d", len(rows[0]), len(want))
+	}
+	for i := range want {
+		if rows[0][i] != want[i] {
+			t.Errorf("round_players.csv column %d = %q, want %q", i, rows[0][i], want[i])
+		}
+	}
+}
+
+func TestRoundPlayersCSVValuesLandInClaimedColumns(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := New(dir, Meta{DemoFile: "test.dem", Map: "de_mirage", TickRate: 64})
+	s.Round(distinctiveRound())
+	s.Close()
+
+	rows := readCSV(t, filepath.Join(dir, "round_players.csv"))
+	if len(rows) != 2 { // header + 1 player
+		t.Fatalf("round_players.csv has %d rows, want 2", len(rows))
+	}
+	got := rowByHeader(rows[0], rows[1])
+
+	want := map[string]string{
+		"round":                     "21",
+		"steamid":                   "76561198000000123",
+		"team":                      "2",
+		"money_at_freeze_end":       "4800",
+		"equip_value_at_freeze_end": "3350",
+		"survived":                  "1",
+	}
+	for col, wantVal := range want {
+		if got[col] != wantVal {
+			t.Errorf("round_players.csv column %q = %q, want %q", col, got[col], wantVal)
+		}
 	}
 }

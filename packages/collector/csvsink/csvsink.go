@@ -79,6 +79,15 @@ func New(dir string, meta Meta) (*Sink, error) {
 		buf:      make([]string, 0, len(collector.TickColumns())),
 		complete: true,
 	}
+	// If we return an error below, close whatever s has already opened
+	// instead of leaking the handles. ok flips to true only once every
+	// file is open and every header is written.
+	ok := false
+	defer func() {
+		if !ok {
+			s.closeAll()
+		}
+	}()
 
 	var err error
 	if s.ticksFile, err = os.Create(filepath.Join(dir, "ticks.csv.gz")); err != nil {
@@ -106,7 +115,26 @@ func New(dir string, meta Meta) (*Sink, error) {
 		return nil, fmt.Errorf("write round_players header: %w", err)
 	}
 
+	ok = true
 	return s, nil
+}
+
+// closeAll closes every handle opened so far, ignoring errors. It exists to
+// release OS resources when New() fails partway through, not to guarantee
+// flushed output — the caller is about to discard this Sink entirely.
+func (s *Sink) closeAll() {
+	if s.gz != nil {
+		s.gz.Close()
+	}
+	if s.ticksFile != nil {
+		s.ticksFile.Close()
+	}
+	if s.roundsFile != nil {
+		s.roundsFile.Close()
+	}
+	if s.rpFile != nil {
+		s.rpFile.Close()
+	}
 }
 
 func (s *Sink) Round(r *collector.Round) error {
@@ -156,36 +184,41 @@ func (s *Sink) Round(r *collector.Round) error {
 	return nil
 }
 
-// Close flushes every writer and writes the manifest. The manifest is written
-// last because it records counts that are only final once all rounds are in.
+// Close flushes every writer and closes every file, in the order csv flush ->
+// gzip close -> file close for each of the three streams, and it does so even
+// when an earlier step in that sequence failed. A single early failure (say,
+// a full disk hitting the ticks stream first) must not abandon rounds.csv and
+// round_players.csv unflushed: a demo run takes minutes to regenerate, so
+// whatever output can be salvaged is worth salvaging.
+//
+// The first error encountered is returned; later errors are discarded. The
+// manifest is only written once everything above has succeeded, since it
+// records final counts and a "complete" flag that would be misleading to
+// write after a failed close.
 func (s *Sink) Close() error {
+	var first error
+	record := func(step string, err error) {
+		if err != nil && first == nil {
+			first = fmt.Errorf("%s: %w", step, err)
+		}
+	}
+
 	s.ticks.Flush()
-	if err := s.ticks.Error(); err != nil {
-		return fmt.Errorf("flush ticks: %w", err)
-	}
-	if err := s.gz.Close(); err != nil {
-		return fmt.Errorf("close gzip: %w", err)
-	}
-	if err := s.ticksFile.Close(); err != nil {
-		return fmt.Errorf("close ticks file: %w", err)
-	}
+	record("flush ticks", s.ticks.Error())
+	record("close gzip", s.gz.Close())
+	record("close ticks file", s.ticksFile.Close())
 
 	s.rounds.Flush()
-	if err := s.rounds.Error(); err != nil {
-		return fmt.Errorf("flush rounds: %w", err)
-	}
-	if err := s.roundsFile.Close(); err != nil {
-		return fmt.Errorf("close rounds file: %w", err)
-	}
+	record("flush rounds", s.rounds.Error())
+	record("close rounds file", s.roundsFile.Close())
 
 	s.roundPlayers.Flush()
-	if err := s.roundPlayers.Error(); err != nil {
-		return fmt.Errorf("flush round_players: %w", err)
-	}
-	if err := s.rpFile.Close(); err != nil {
-		return fmt.Errorf("close round_players file: %w", err)
-	}
+	record("flush round_players", s.roundPlayers.Error())
+	record("close round_players file", s.rpFile.Close())
 
+	if first != nil {
+		return first
+	}
 	return s.writeManifest()
 }
 
