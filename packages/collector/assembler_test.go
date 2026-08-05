@@ -242,6 +242,126 @@ func TestSetTimeoutNoOpWithNoRoundOpen(t *testing.T) {
 	}
 }
 
+// A player who connects after freezetime ended is absent from the economy
+// snapshot (which only ran once, at freezeEnd) but present in the tick
+// stream. Without backfilling, round_players.csv would silently drop them -
+// breaking any INNER JOIN against ticks.csv.gz.
+func TestBackfillRosterAddsPlayerObservedOnlyInTicks(t *testing.T) {
+	a, got := collect()
+
+	a.roundStart(1000, 1)
+	a.freezeEnd(2000, []PlayerRound{{SteamID: 7, Team: common.TeamTerrorists, MoneyAtFreezeEnd: 800}})
+	a.appendTick(PlayerTick{Tick: 2100, SteamID: 7, Team: common.TeamTerrorists, IsAlive: true})
+	// 8 joined after freezetime end: never in the economy snapshot, but
+	// shows up in the tick stream mid-round.
+	a.appendTick(PlayerTick{Tick: 2200, SteamID: 8, Team: common.TeamCounterTerrorists, IsAlive: true})
+	a.appendTick(PlayerTick{Tick: 2300, SteamID: 8, Team: common.TeamCounterTerrorists, IsAlive: false})
+	a.roundEnd(3000, common.TeamTerrorists, events.RoundEndReasonTerroristsWin)
+	a.roundEndOfficial(3300)
+
+	if len(*got) != 1 {
+		t.Fatalf("emitted %d rounds, want 1", len(*got))
+	}
+	players := (*got)[0].Meta.Players
+	if len(players) != 2 {
+		t.Fatalf("round has %d players, want 2 (original + backfilled)", len(players))
+	}
+
+	var backfilled *PlayerRound
+	for i := range players {
+		if players[i].SteamID == 8 {
+			backfilled = &players[i]
+		}
+	}
+	if backfilled == nil {
+		t.Fatal("player 8 (observed only in ticks) is missing from round_players roster")
+	}
+	if !backfilled.JoinedLate {
+		t.Error("JoinedLate = false, want true for a player backfilled from the tick stream")
+	}
+	if backfilled.MoneyAtFreezeEnd != 0 || backfilled.EquipValueAtFreezeEnd != 0 {
+		t.Errorf("backfilled economy = (%d, %d), want (0, 0) - never observed at freezetime end",
+			backfilled.MoneyAtFreezeEnd, backfilled.EquipValueAtFreezeEnd)
+	}
+	if backfilled.Team != common.TeamCounterTerrorists {
+		t.Errorf("backfilled Team = %v, want CT (from their ticks)", backfilled.Team)
+	}
+	// Their last sampled tick had IsAlive=false.
+	if backfilled.Survived {
+		t.Error("backfilled Survived = true, want false (last observed tick was dead)")
+	}
+
+	// The originally-snapshotted player must be untouched.
+	if players[0].SteamID != 7 || players[0].JoinedLate {
+		t.Errorf("original roster entry corrupted: %+v", players[0])
+	}
+}
+
+// A round where every player was correctly captured by the freezetime
+// snapshot must not gain any spurious backfilled entries.
+func TestBackfillRosterNoOpWhenTicksMatchRoster(t *testing.T) {
+	a, got := collect()
+
+	a.roundStart(1000, 1)
+	a.freezeEnd(2000, []PlayerRound{{SteamID: 7, MoneyAtFreezeEnd: 800}})
+	a.appendTick(PlayerTick{Tick: 2100, SteamID: 7})
+	a.roundEnd(3000, common.TeamTerrorists, events.RoundEndReasonTerroristsWin)
+	a.roundEndOfficial(3300)
+
+	players := (*got)[0].Meta.Players
+	if len(players) != 1 {
+		t.Fatalf("round has %d players, want 1 (no backfill needed)", len(players))
+	}
+	if players[0].JoinedLate {
+		t.Error("JoinedLate = true on the only, already-known player, want false")
+	}
+}
+
+// setMaxRounds caps how many rounds flush() ever emits. demoinfocs can open
+// round maxRounds+1 (RoundStart) before the maxRounds-triggered Cancel()
+// actually stops parsing (see setMaxRounds's doc comment); finish() must not
+// flush that extra round as an incomplete one, or "-max-rounds N" silently
+// produces N+1 rounds on disk.
+func TestMaxRoundsSkipsTrailingRoundOpenedAfterCap(t *testing.T) {
+	a, got := collect()
+	a.setMaxRounds(1)
+
+	a.roundStart(1000, 1)
+	a.freezeEnd(2000, nil)
+	a.roundEnd(3000, common.TeamTerrorists, events.RoundEndReasonTerroristsWin)
+	a.roundEndOfficial(3300) // round 1: reaches the cap, must still emit
+
+	// Round 2 opens (the ordering quirk this guards against) but never
+	// finishes before parsing stops.
+	a.roundStart(4000, 2)
+	a.appendTick(PlayerTick{Tick: 4001})
+	a.finish()
+
+	if len(*got) != 1 {
+		t.Fatalf("emitted %d rounds, want 1 (round 2 must be discarded once the cap is reached)", len(*got))
+	}
+	if (*got)[0].Meta.Number != 1 {
+		t.Errorf("emitted round number = %d, want 1", (*got)[0].Meta.Number)
+	}
+}
+
+// A cap of zero (the default) must impose no limit at all.
+func TestZeroMaxRoundsImposesNoLimit(t *testing.T) {
+	a, got := collect()
+	a.setMaxRounds(0)
+
+	for n := int32(1); n <= 3; n++ {
+		a.roundStart(1000*n, n)
+		a.freezeEnd(2000*n, nil)
+		a.roundEnd(3000*n, common.TeamTerrorists, events.RoundEndReasonTerroristsWin)
+		a.roundEndOfficial(3300 * n)
+	}
+
+	if len(*got) != 3 {
+		t.Fatalf("emitted %d rounds, want 3 (maxRounds=0 must not cap anything)", len(*got))
+	}
+}
+
 func TestAppendTickOnlyWhenRoundOpen(t *testing.T) {
 	a, got := collect()
 

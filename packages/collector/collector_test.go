@@ -28,6 +28,34 @@ func TestIncludeParticipant(t *testing.T) {
 	}
 }
 
+// isAlive and isUnspawnedPawn both read m_lifeState off PlayerPawnEntity(),
+// which requires a real demoinfocs entity graph (demoInfoProvider is
+// unexported on common.Player, so a working PlayerPawnEntity() cannot be
+// constructed from outside the demoinfocs module without pulling in testify,
+// which this project's dependency constraint forbids). The branch that
+// actually reads m_lifeState is therefore verified against the real demo in
+// packages/round-collector's regeneration step (see C2's verification in the
+// fix report), not here. What IS unit-testable, and what these two guard, is
+// the "no pawn at all" fallback both functions must take safely.
+
+// isAlive must fall back to p.IsAlive() - not silently report alive - when
+// there is no pawn entity to read m_lifeState from.
+func TestIsAliveFallsBackWithNoPawnEntity(t *testing.T) {
+	p := &common.Player{SteamID64: 7}
+	if got, want := isAlive(p), p.IsAlive(); got != want {
+		t.Errorf("isAlive() = %v, want %v (must fall back to p.IsAlive() with no pawn entity)", got, want)
+	}
+}
+
+// isUnspawnedPawn must never flag a participant with no pawn entity at all
+// as an unspawned-pawn phantom - there's nothing to sample-gate on.
+func TestIsUnspawnedPawnFalseWithNoPawnEntity(t *testing.T) {
+	p := &common.Player{SteamID64: 7}
+	if isUnspawnedPawn(p) {
+		t.Error("isUnspawnedPawn = true with no pawn entity, want false")
+	}
+}
+
 // demoinfocs dispatches a FrameDone for DEM_FullPacket as well as DEM_Packet;
 // both can carry the same ingame tick, and without suppression that duplicates
 // every (round, tick, steamid) row sampled on such a tick.

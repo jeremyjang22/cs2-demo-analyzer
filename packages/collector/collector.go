@@ -65,7 +65,10 @@ func NewFromReader(r io.Reader, sink Sink) *Collector {
 
 // SetMaxRounds stops parsing after n complete rounds. Zero means no limit.
 // A development affordance: iterating on a 667MB demo takes seconds, not minutes.
-func (c *Collector) SetMaxRounds(n int) { c.maxRounds = n }
+func (c *Collector) SetMaxRounds(n int) {
+	c.maxRounds = n
+	c.asm.setMaxRounds(n)
+}
 
 // OnRound registers an extra consumer, called before the sink writes. Future
 // analyzers (counterstrafe, spray) hook in here without touching this file.
@@ -189,15 +192,23 @@ func (c *Collector) sampleFrame() {
 		if !includeParticipant(p) {
 			continue
 		}
+		if isUnspawnedPawn(p) {
+			// A connected controller reconnecting mid-round whose pawn has
+			// not been (re)spawned yet - see isUnspawnedPawn's doc comment.
+			// Not a real sample: skip it entirely rather than record a
+			// phantom row at the world origin.
+			continue
+		}
 		if p.Name != "" {
 			c.names[p.SteamID64] = p.Name
 		}
 
 		pos := p.Position()
 		x, y, z := float32(pos.X), float32(pos.Y), float32(pos.Z)
+		alive := isAlive(p)
 
 		vx, vy, vz, speed, valid := float32(0), float32(0), float32(0), float32(0), false
-		if p.IsAlive() {
+		if alive {
 			vx, vy, vz, speed, valid = c.vel.compute(p.SteamID64, tick, x, y, z)
 		} else {
 			c.vel.forget(p.SteamID64)
@@ -216,7 +227,7 @@ func (c *Collector) sampleFrame() {
 			IsScoped:   p.IsScoped(),
 			Health:     int16(p.Health()),
 			Armor:      int16(p.Armor()),
-			IsAlive:    p.IsAlive(),
+			IsAlive:    alive,
 			Place:      p.LastPlaceName(),
 		}
 
@@ -260,6 +271,16 @@ func (c *Collector) readPawnProps(p *common.Player, t *PlayerTick) {
 	}
 }
 
+// snapshotEconomy runs from the RoundFreezetimeEnd handler and reads
+// EquipmentValueCurrent (m_unCurrentEquipmentValue), the live equipment
+// value, NOT EquipmentValueFreezeTimeEnd (m_unFreezetimeEndEquipmentValue).
+// The latter looks purpose-built for this but is a trap: the server writes
+// that field AT the moment freezetime ends, which is AFTER demoinfocs
+// dispatches RoundFreezetimeEnd to handlers - so reading it here returns the
+// PREVIOUS round's value, one round stale, every round. m_unCurrentEquipmentValue
+// is instead kept live throughout, so at this exact instant (freezetime just
+// ended, nothing bought or lost yet) it already reflects what the player
+// bought this round.
 func (c *Collector) snapshotEconomy() []PlayerRound {
 	players := c.parser.GameState().Participants().Playing()
 	out := make([]PlayerRound, 0, len(players))
@@ -271,25 +292,40 @@ func (c *Collector) snapshotEconomy() []PlayerRound {
 			SteamID:               p.SteamID64,
 			Team:                  p.Team,
 			MoneyAtFreezeEnd:      int32(p.Money()),
-			EquipValueAtFreezeEnd: int32(p.EquipmentValueFreezeTimeEnd()),
+			EquipValueAtFreezeEnd: int32(p.EquipmentValueCurrent()),
 		})
 	}
 	return out
 }
 
+// markSurvivors runs from the RoundEnd handler and records, per player in
+// this round's roster, whether they were observed alive at that instant.
+// Participants().Playing() only returns currently-connected players, so a
+// player who disconnected mid-round is simply absent from it - exactly the
+// same as a player who is present but dead. Distinguish the two: `present`
+// tracks who was actually observed (connected) at RoundEnd; a roster entry
+// absent from `present` gets Disconnected=true, marking its Survived=false as
+// "unknown" rather than "died". See PlayerRound's doc comment.
 func (c *Collector) markSurvivors() {
 	if !c.asm.active() {
 		return
 	}
 	alive := make(map[uint64]bool, 10)
+	present := make(map[uint64]bool, 10)
 	for _, p := range c.parser.GameState().Participants().Playing() {
-		if p != nil && p.IsAlive() {
+		if p == nil {
+			continue
+		}
+		present[p.SteamID64] = true
+		if isAlive(p) {
 			alive[p.SteamID64] = true
 		}
 	}
 	players := c.asm.cur.Meta.Players
 	for i := range players {
-		players[i].Survived = alive[players[i].SteamID]
+		id := players[i].SteamID
+		players[i].Survived = alive[id]
+		players[i].Disconnected = !present[id]
 	}
 }
 
@@ -379,6 +415,58 @@ func (c *Collector) consumePendingTimeout() {
 // entries are also guarded against defensively.
 func includeParticipant(p *common.Player) bool {
 	return p != nil && p.SteamID64 != 0
+}
+
+// isAlive reports whether p is genuinely alive, reading m_lifeState directly
+// off the player's pawn entity rather than trusting p.IsAlive(). p.IsAlive()
+// short-circuits true whenever p.Health() > 0 - and a player reconnecting
+// mid-round, whose pawn has not been (re)spawned yet, reads a baseline
+// Health() of 100 despite never having been placed in the world, so that
+// short-circuit reports them alive when they are not. LIFE_ALIVE is 0. Falls
+// back to p.IsAlive() when the pawn has no m_lifeState property available
+// (including "no pawn at all"), which is the case p.IsAlive() already
+// handles correctly via m_bPawnIsAlive.
+func isAlive(p *common.Player) bool {
+	ent := p.PlayerPawnEntity()
+	if ent == nil {
+		return p.IsAlive()
+	}
+	v, ok := ent.PropertyValue("m_lifeState")
+	if !ok {
+		return p.IsAlive()
+	}
+	return v.UInt64() == 0
+}
+
+// isUnspawnedPawn reports whether p is a connected controller whose pawn has
+// not been placed in the world this life - the state a player sits in after
+// reconnecting mid-round, since the server does not spawn them until the
+// next round starts. Confirmed against mega_ot_mirage.dem: SteamID
+// 76561199564151150 in round 11 produced 3,164 rows at the exact world
+// origin (x=y=z=0.00) with is_alive=1, health=100, before this check existed
+// - Participants().Playing() returns them and includeParticipant only
+// rejects nil/SteamID-0, so nothing else filtered them out.
+//
+// m_lifeState alone (see isAlive) is NOT a sufficient signal to gate
+// sampling on: a genuinely dead player mid-round (real kill, frozen last
+// position) also reads a non-zero m_lifeState and must still be sampled -
+// dropping those rows would silently break the documented dead-row behavior
+// (see PlayerTick's doc comment). What actually distinguishes the phantom
+// reconnect case is that its pawn has never received a real position update
+// at all: it sits at the exact coordinate origin, which no real player - dead
+// or alive - lands on by coincidence. So this requires BOTH signals: not
+// alive per m_lifeState, AND position exactly (0, 0, 0).
+func isUnspawnedPawn(p *common.Player) bool {
+	ent := p.PlayerPawnEntity()
+	if ent == nil {
+		return false
+	}
+	v, ok := ent.PropertyValue("m_lifeState")
+	if !ok || v.UInt64() == 0 {
+		return false
+	}
+	pos := ent.Position()
+	return pos.X == 0 && pos.Y == 0 && pos.Z == 0
 }
 
 // sampleGuard suppresses a duplicate sampleFrame call for the same ingame

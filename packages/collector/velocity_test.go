@@ -138,3 +138,50 @@ func TestSetTickRateIgnoresNonPositive(t *testing.T) {
 		t.Errorf("vx = %v, want 640 (non-positive SetTickRate calls must be ignored)", vx)
 	}
 }
+
+// The constructor's tickRate <= 0 fallback (to 64) must actually be used by
+// compute(), not just stored - this exact branch shipped a production defect
+// (velocities computed before CSVCMsg_ServerInfo arrived silently used a
+// zero/negative tick rate) before SetTickRate existed to correct it.
+func TestNewVelocityTrackerFallsBackToDefaultTickRate(t *testing.T) {
+	v := newVelocityTracker(-1) // corrupt/unavailable header value
+	v.compute(7, 100, 0, 0, 0)
+	// 10 units in 1 tick at the fallback of 64 tick/s -> 640 units/sec.
+	vx, _, _, speed, valid := v.compute(7, 101, 10, 0, 0)
+	if !valid {
+		t.Fatal("valid = false, want true")
+	}
+	if math.Abs(float64(vx)-640) > 0.01 {
+		t.Errorf("vx = %v, want 640 (newVelocityTracker(-1) must fall back to 64 tick/s)", vx)
+	}
+	if math.Abs(float64(speed)-640) > 0.01 {
+		t.Errorf("speed = %v, want 640", speed)
+	}
+}
+
+// A gap within the bound must still be treated as continuous motion -
+// TestMultiTickGapScalesCorrectly already covers a 2-tick gap; this pins the
+// boundary itself.
+func TestGapAtBoundStaysValid(t *testing.T) {
+	v := newVelocityTracker(64)
+	v.compute(7, 100, 0, 0, 0)
+	_, _, _, _, valid := v.compute(7, 108, 80, 0, 0) // gap of exactly maxTickGap (8)
+	if !valid {
+		t.Error("valid = false for a gap exactly at maxTickGap, want true")
+	}
+}
+
+// A player absent from Playing() for a stretch mid-round (e.g. a temporarily
+// un-spawned pawn while reconnecting) and then reappearing must not have
+// their gap differenced into a smooth-looking velocity: it must invalidate.
+func TestGapBeyondBoundInvalidatesVelocity(t *testing.T) {
+	v := newVelocityTracker(64)
+	v.compute(7, 100, 0, 0, 0)
+	vx, vy, vz, speed, valid := v.compute(7, 109, 720, 0, 0) // gap of 9, one past maxTickGap
+	if valid {
+		t.Error("valid = true for a gap beyond maxTickGap, want false")
+	}
+	if vx != 0 || vy != 0 || vz != 0 || speed != 0 {
+		t.Errorf("velocity = (%v, %v, %v) speed %v for an invalid gap, want all zero", vx, vy, vz, speed)
+	}
+}

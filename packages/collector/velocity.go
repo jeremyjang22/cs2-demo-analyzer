@@ -36,14 +36,27 @@ func (v *velocityTracker) SetTickRate(tickRate float64) {
 	v.tickRate = tickRate
 }
 
+// maxTickGap bounds how many ticks may separate two consecutive samples for a
+// player before they are treated as discontinuous rather than differenced.
+// death/respawn already calls forget() to invalidate the very next sample,
+// but a player can also drop out of Participants().Playing() mid-round for
+// reasons that don't - e.g. a temporarily un-spawned pawn while reconnecting
+// - and reappear hundreds of ticks later. Differencing across that kind of
+// gap divides a real (possibly large) displacement by a correspondingly
+// large dt, producing a small, smooth-looking velocity that is actually
+// meaningless. 8 ticks is 125ms at 64-tick: generous for a single missed
+// sample but well short of any real presence gap.
+const maxTickGap = 8
+
 // compute returns velocity in units/sec. valid is false when there is no usable
-// predecessor - a player's first tick in a round, or after a death gap - so
-// consumers can filter rather than trusting a bogus zero.
+// predecessor - a player's first tick in a round, after a death gap, or after
+// a presence gap wider than maxTickGap - so consumers can filter rather than
+// trusting a bogus zero (or a bogus smooth low velocity).
 func (v *velocityTracker) compute(steamID uint64, tick int32, x, y, z float32) (vx, vy, vz, speed float32, valid bool) {
 	prev, ok := v.last[steamID]
 	v.last[steamID] = sample{tick: tick, x: x, y: y, z: z}
 
-	if !ok || tick <= prev.tick {
+	if !ok || tick <= prev.tick || tick-prev.tick > maxTickGap {
 		return 0, 0, 0, 0, false
 	}
 

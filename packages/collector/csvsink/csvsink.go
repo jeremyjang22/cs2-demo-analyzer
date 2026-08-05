@@ -174,6 +174,8 @@ func (s *Sink) Round(r *collector.Round) error {
 			strconv.Itoa(int(p.MoneyAtFreezeEnd)),
 			strconv.Itoa(int(p.EquipValueAtFreezeEnd)),
 			boolStr(p.Survived),
+			boolStr(p.Disconnected),
+			boolStr(p.JoinedLate),
 		}); err != nil {
 			return fmt.Errorf("write round_player r%d p%d: %w", m.Number, p.SteamID, err)
 		}
