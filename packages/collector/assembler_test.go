@@ -141,7 +141,8 @@ func TestFinishWithNoPendingRoundEmitsNothing(t *testing.T) {
 	}
 }
 
-// Stray events before the first RoundStart must not panic or emit.
+// active() must report true for the whole life of an open round, across every
+// phase, and flip back to false once the round flushes.
 func TestActiveReturnsTrueWhenRoundOpen(t *testing.T) {
 	a, got := collect()
 
@@ -174,6 +175,7 @@ func TestActiveReturnsTrueWhenRoundOpen(t *testing.T) {
 	}
 }
 
+// Stray events before the first RoundStart must not panic or emit.
 func TestEventsBeforeRoundStartAreIgnored(t *testing.T) {
 	a, got := collect()
 
