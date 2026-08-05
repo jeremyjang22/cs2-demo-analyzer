@@ -1017,7 +1017,7 @@ Expected: FAIL — `undefined: New`
 // Layout:
 //
 //	<dir>/manifest.json        schema version, map, tickrate, column lists, counts
-//	<dir>/players.csv          one row per (steamid, name) observed
+//	<dir>/players.csv          one row per steamid, with their last-seen name
 //	<dir>/rounds.csv           one row per round
 //	<dir>/round_players.csv    one row per (round, player)
 //	<dir>/ticks.csv.gz         one row per (round, tick, player)
@@ -1285,9 +1285,13 @@ func (s *Sink) SetMap(name string) { s.meta.Map = name }
 and:
 
 ```go
-// Players writes players.csv: one row per (steamid, name) observed. Names live
-// here rather than on tick rows because repeating them across millions of rows
-// is waste, and because players can change name mid-match.
+// Players writes players.csv: one row per steamid, holding their last-seen
+// name. Names live here rather than on tick rows because repeating them across
+// millions of rows is waste.
+//
+// Note this collapses mid-match name changes to the final name. The design doc
+// specifies a full (steamid, name, first_seen_tick) observation table; that is
+// deliberately deferred until a demo with a rename shows it matters.
 func (s *Sink) Players(names map[uint64]string) error {
     f, err := os.Create(filepath.Join(s.dir, "players.csv"))
     if err != nil {
