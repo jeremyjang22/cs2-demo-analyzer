@@ -82,12 +82,15 @@ type PlayerTick struct {
 
     VelX, VelY, VelZ float32   // derived by position differencing - see below
     Speed            float32   // XY magnitude, units/sec
-    MaxSpeed         float32   // m_flMaxspeed - varies by weapon; normalizes Speed
 
     Buttons          uint64    // raw bitmask - the counterstrafe substrate
+                               // NOTE: bound to m_nButtonDownMaskPrev, the PREVIOUS
+                               // command's mask, so it lags position by one tick
 
     ShotsFired           int16   // m_iShotsFired - spray index, resets between bursts
     PunchYaw, PunchPitch float32 // m_vecCsViewPunchAngle - recoil kick on the view
+    AccuracyPenalty      float32 // m_fAccuracyPenalty on the active weapon - live
+                                 // inaccuracy; higher = worse. Replaced MaxSpeed.
 
     IsDucking, IsWalking, IsAirborne, IsScoped bool
 
@@ -166,9 +169,25 @@ which serve the mechanical-skill goals directly and are expensive to backfill
 - **`m_iShotsFired`** → `ShotsFired`. The spray index — resets between bursts, so
   it identifies bullet 1 vs bullet 12. This is the spine of any recoil-control
   metric.
-- **`m_pMovementServices.m_flMaxspeed`** → `MaxSpeed`. Max speed varies by weapon
-  (~260 knife, ~215 rifle, ~200 AWP). Without it, "was the player stopped?" is
-  not comparable across weapons; with it, `Speed / MaxSpeed` is.
+- ~~**`m_pMovementServices.m_flMaxspeed`** → `MaxSpeed`~~ — **REMOVED, spiked
+  2026-08-05.** The premise was wrong. That property reads **260.00 for every
+  weapon** — knife, Glock, USP, AK-47, grenades — so the column carried zero
+  information. A follow-up probe of the active weapon entity (`CAK47`, **355
+  properties**) found no max-speed field either: the weapon-adjusted cap is a
+  static item-schema value the game reads from its own files and never networks.
+  It is not obtainable from a demo at any price.
+
+  Decision: drop the column rather than hardcode a per-weapon table inside the
+  parser, which would go stale on any Valve rebalance and silently produce wrong
+  normalization. Consumers can join the existing `active_weapon` column against a
+  table they maintain, where the assumption is visible. **Do not re-run this
+  probe** — the answer is recorded here.
+
+- **`m_fAccuracyPenalty`** (on the ACTIVE WEAPON entity, not the pawn; note
+  `m_f`, not `m_fl`) → `AccuracyPenalty`. Found during the max-speed probe and
+  captured in its place. The weapon's live inaccuracy value: it rises while
+  firing and moving, decays as the weapon settles. The most direct spray-quality
+  signal in the data.
 - **`m_pCameraServices.m_vecCsViewPunchAngle`** → `PunchYaw`, `PunchPitch`. The
   recoil kick applied to the view. Diffed against actual aim angles, it shows
   whether a player is compensating for the pattern or fighting it.
@@ -227,15 +246,27 @@ The properties exist in the demo but are an explicit TODO in the library at
 
 They are reachable via `GameState().Rules().Entity().PropertyValueMust(...)`.
 
-Timeouts occur between rounds, so they fall outside the capture window under
-this design. **Unverified:** whether CS2 fires `RoundStart` before a timeout
-begins. If it does, a 30s timeout injects ~19k frozen rows tagged `freeze` and
-inflates that round's apparent freezetime. Harmless for any analysis filtering
-to `phase = 'live'`, but confusing if unexplained.
+**RESOLVED empirically, 2026-08-05.** Timeouts sit **inside the following
+round's freezetime**, not in a gap between rounds — `RoundEndOfficial` and the
+next `RoundStart` fire on the same tick, back to back, so there is no gap to sit
+in. Measured on `mega_ot_mirage.dem`: the two timeout rounds have freezetime
+spans of **7,378 and 3,755 ticks against 1,280-1,696 for the other 46**.
 
-Resolution: record `TimeoutBefore` / `TimeoutTeam` at round level (~10 lines),
-and verify the ordering empirically against `mega_ot_mirage.dem` during
-implementation by logging round boundary ticks and looking for outliers.
+So the risk flagged above is real: a timeout round does carry thousands of extra
+frozen-player rows tagged `freeze`. They compress to almost nothing and are
+harmless to any analysis filtering `phase = 'live'`, and `timeout_before` now
+labels exactly which rounds they are.
+
+Two implementation notes, both learned the hard way:
+
+1. **The property names need a `m_pGameRules.` prefix.** demoinfocs resolves
+   every game-rules property through that prefix, so the bare names quoted from
+   the library's TODO comment always return `ok=false`. The first implementation
+   shipped a permanently-zero column because of this.
+2. **A one-shot read at `RoundStart` does not work.** A timeout is a window, not
+   a state at an instant. Detection watches for the flag's rising edge per frame
+   and attributes it to the round open at that moment (not the literal next
+   `RoundStart`, which lands one round late).
 
 ## Output format
 
@@ -250,7 +281,8 @@ out/mega_ot_mirage/
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": "1.0",
+  "tick_rate_source": "measured",
   "demo_file": "mega_ot_mirage.dem",
   "map": "de_mirage",
   "tick_rate": 64,
@@ -267,10 +299,19 @@ out/mega_ot_mirage/
 }
 ```
 
-`players.csv` is an observation table rather than a keyed lookup: one row per
-distinct `(steamid, name)` pair with the tick it was first seen. A player who
-changes name mid-match produces two rows. This keeps name history without
-putting names on ~4M tick rows.
+`players.csv` **as shipped** is one row per SteamID holding their last-seen name,
+sorted by SteamID for reproducibility. Names live here rather than on ~3M tick
+rows because repeating them is waste.
+
+The full `(steamid, name, first_seen_tick)` observation table described earlier
+in drafts is **deliberately deferred** — it only matters for a demo with a
+mid-match rename, and none has been observed yet. `players` is consequently
+absent from the manifest's `columns` map.
+
+`tick_rate_source` records whether the rate was `"measured"` from
+`CSVCMsg_ServerInfo` or `"assumed"` because the demo never reported one. This
+exists because an early version silently defaulted to 64 and recorded `-1`,
+making every velocity in the file unverifiable after the fact.
 
 `velocity_source` records how velocity was obtained (always `position_diff` —
 see the velocity section). `complete` is false when a demo cut off, so a
@@ -319,27 +360,54 @@ playground script but makes code untestable and unusable as a library.
 
 ## Testing
 
-demoinfocs ships a mock parser at `pkg/demoinfocs/fake` with
-`MockEventsFrame(frame, events...)` that satisfies the `demoinfocs.Parser`
-interface. The constructor takes that interface so the state machine is testable
-with no demo files:
+**`fake.Parser` was NOT used.** It embeds `testify/mock`, which would add a
+dependency and turn every state-machine test into mock-expectation plumbing.
+Instead the round-assembly logic lives in a pure `assembler` with no parser
+dependency, tested with plain Go and zero mocking. The constructor still takes
+the `demoinfocs.Parser` interface rather than an `io.Reader`, which keeps the
+door open:
 
 ```go
 func New(p demoinfocs.Parser) *Collector    // takes the interface - testable
 func NewFromReader(r io.Reader) *Collector  // convenience wrapper
 ```
 
-**Unit tests** (via `fake.Parser`) — these cover exactly where data corrupts
-silently:
+**Unit tests** cover the pure core, where the ordering rules live:
 
 - phase transitions across a normal round
 - round restart discards the partial round
 - final round with no `RoundEndOfficial` still flushes, marked incomplete
-- warmup and the tick-0 false-positive `RoundStart` are filtered
-- economy snapshot is taken at freezetime end, not round start
+- duplicate `roundEnd` is ignored; stray events before the first `RoundStart`
+  neither panic nor emit
+- velocity arithmetic, including XY-only speed and the no-predecessor cases
+- CSV column/value alignment for every output file
 
-**Integration test** — one small demo fixture (the 667 MB file is impractical
-for CI) asserting round count, column headers, and known values.
+**Known coverage gap — read this before trusting a green suite.** The row
+production path (`sampleFrame`, `readPawnProps`, `pollTimeout`,
+`snapshotEconomy`, `markSurvivors`) has NO unit tests, because it needs a live
+parser and mocking was ruled out. **Every serious defect found in this project
+lived in that region**, and none was catchable by a unit test as the package is
+structured: `buttons` 100% zero, `max_speed` constant, timeouts dead, velocity
+computed on a fallback tick rate, phantom SteamID-0 rows, duplicate primary
+keys, one-round-stale equipment values, phantom origin rows on reconnect.
+
+The structural fix is to extract per-player row construction into a pure
+function over a small interface (position, health, alive, property getter),
+testable with a hand-written stub and no dependency. Until that exists, treat
+artifact-level assertions as the real gate.
+
+**Artifact assertions** — the checks that actually catch this class of bug. Run
+them against regenerated output, not just the test suite:
+
+- `(round, tick, steamid)` is unique
+- every `(round, steamid)` in ticks has a row in `round_players.csv`
+- no player's entire presence in a round sits at one fixed position
+- no eco round reports rifle-priced equipment values
+- `vel_valid = 0` count equals exactly one first-sample per (round, player)
+- warmup is excluded: round count matches the match scoreboard
+
+**Integration test** — a small demo fixture (the 667 MB file is impractical for
+CI) asserting round count, column headers, and known values. **Not yet written.**
 
 **Manual verification** — run against `mega_ot_mirage.dem`, confirm round count
 matches the scoreboard, output size lands in the 50-80 MB range, and the file
