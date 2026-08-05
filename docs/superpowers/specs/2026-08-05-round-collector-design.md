@@ -80,10 +80,14 @@ type PlayerTick struct {
     X, Y, Z          float32   // world position (Hammer units)
     Yaw, Pitch       float32   // view angles
 
-    VelX, VelY, VelZ float32
-    Speed            float32   // XY magnitude, derived
+    VelX, VelY, VelZ float32   // derived by position differencing - see below
+    Speed            float32   // XY magnitude, units/sec
+    MaxSpeed         float32   // m_flMaxspeed - varies by weapon; normalizes Speed
 
     Buttons          uint64    // raw bitmask - the counterstrafe substrate
+
+    ShotsFired           int16   // m_iShotsFired - spray index, resets between bursts
+    PunchYaw, PunchPitch float32 // m_vecCsViewPunchAngle - recoil kick on the view
 
     IsDucking, IsWalking, IsAirborne, IsScoped bool
 
@@ -124,21 +128,57 @@ Player names are deliberately absent from the tick row: repeating a name across
 `players.csv` maps it to a name. This mirrors the lock-to-SteamID approach
 already used in `playground/go/cmd/track-player/main.go:111`.
 
-### Open item: velocity source
+### Resolved: velocity comes from position differencing
 
-demoinfocs v5 exposes no `Player.Velocity()` — only `GrenadeProjectile` has one
-(`common/common.go:47`). Two ways to populate `VelX/Y/Z`:
+**Spiked 2026-08-05 against `mega_ot_mirage.dem` — settled.** A `CCSPlayerPawn`
+carries 324 network properties and **none of them is a current-velocity vector.**
+The only velocity-named properties are:
 
-1. Read `m_vecVelocity` off the player pawn entity via the raw-property escape
-   hatch (`Entity.PropertyValueMust`). True server-side value, but the property
-   name is unconfirmed for CS2 pawns.
-2. Difference positions between consecutive ticks. Guaranteed to work; accurate
-   enough for stop-detection at 64 Hz.
+```
+m_vecBaseVelocity                          [0 0 0]   external pushes only, always zero
+m_flVelocityModifier                       1         speed penalty scalar
+m_pMovementServices.m_flFallVelocity       0
+m_pMovementServices.m_flLastJumpVelocityZ  257.37
+m_pMovementServices.m_flLastLandedVelocityX/Y/Z
+```
 
-**Plan:** spike option 1 first (dump `PlayerPawnEntity().Properties()` and grep),
-fall back to option 2. Whichever wins is recorded in the manifest as
-`velocity_source` so downstream analysis knows what it is reading. `Speed` is
-populated either way, so nothing downstream depends on the outcome.
+CS2 does not network current player velocity — it is client-side predicted, so it
+never reaches the demo. Position differencing is therefore the only option, not a
+fallback:
+
+```
+dt   = (tick - prevTick) / tickRate
+VelX = (X - prevX) / dt        // units/sec
+Speed = hypot(VelX, VelY)      // XY plane; Z excluded so jumping doesn't inflate it
+```
+
+`velocity_source` in the manifest is permanently `position_diff`. The first tick
+of each player's presence in a round has no predecessor, so velocity is 0 and a
+`vel_valid` bool marks it — consumers filter on that rather than seeing a bogus
+zero. Velocity also resets on respawn and after death gaps.
+
+### Properties the spike surfaced
+
+The same probe found three properties the public API does not expose, all of
+which serve the mechanical-skill goals directly and are expensive to backfill
+(re-parsing 667 MB), so they are captured now:
+
+- **`m_iShotsFired`** → `ShotsFired`. The spray index — resets between bursts, so
+  it identifies bullet 1 vs bullet 12. This is the spine of any recoil-control
+  metric.
+- **`m_pMovementServices.m_flMaxspeed`** → `MaxSpeed`. Max speed varies by weapon
+  (~260 knife, ~215 rifle, ~200 AWP). Without it, "was the player stopped?" is
+  not comparable across weapons; with it, `Speed / MaxSpeed` is.
+- **`m_pCameraServices.m_vecCsViewPunchAngle`** → `PunchYaw`, `PunchPitch`. The
+  recoil kick applied to the view. Diffed against actual aim angles, it shows
+  whether a player is compensating for the pattern or fighting it.
+
+Other useful properties found and deliberately deferred (YAGNI — recorded so the
+next person does not re-run the probe): `m_pMovementServices.m_bDucked` /
+`m_bDucking` / `m_flDuckAmount` (finer duck state than `IsDucking`),
+`m_hGroundEntity` (ground contact), `m_pBulletServices.m_totalHitsOnServer`,
+`m_bSpottedByMask.*` (per-player visibility bitmask), `m_bIsDefusing`,
+`m_flVelocityModifier` (post-hit slowdown).
 
 ## Data flow
 
@@ -217,7 +257,7 @@ out/mega_ot_mirage/
   "rounds": 62,
   "tick_rows": 3847221,
   "complete": true,
-  "velocity_source": "entity_property",
+  "velocity_source": "position_diff",
   "columns": {
     "ticks": ["round", "tick", "phase", "steamid", "team", "x", "y", "z", "..."],
     "rounds": ["number", "start_tick", "freeze_end_tick", "winner", "..."],
@@ -232,8 +272,9 @@ distinct `(steamid, name)` pair with the tick it was first seen. A player who
 changes name mid-match produces two rows. This keeps name history without
 putting names on ~4M tick rows.
 
-`velocity_source` records how velocity was obtained. `complete` is false when a
-demo cut off, so a truncated dump is never mistaken for a whole match.
+`velocity_source` records how velocity was obtained (always `position_diff` —
+see the velocity section). `complete` is false when a demo cut off, so a
+truncated dump is never mistaken for a whole match.
 
 **Versioning rule:** appending a trailing column bumps minor and stays
 backward-compatible for header-aware readers (DuckDB, pandas). Removing or
@@ -318,4 +359,5 @@ Deliberately excluded to keep this focused:
 ## Prerequisites
 
 1. Fix `packages/go.mod` module path from `.../playground/go` to `.../packages`
-2. Spike the velocity property question (~10 min)
+2. ~~Spike the velocity property question~~ — done 2026-08-05, resolved to
+   position differencing (see the velocity section)
