@@ -255,3 +255,35 @@ func boolStr(v bool) string {
 	}
 	return "0"
 }
+
+// SetMap records the map name. The name arrives from a net-message during
+// parsing, after the sink is constructed, so it cannot be passed to New. Safe
+// to call any time before Close, which is when the manifest is written.
+func (s *Sink) SetMap(name string) { s.meta.Map = name }
+
+// Players writes players.csv: one row per steamid, holding their last-seen
+// name. Names live here rather than on tick rows because repeating them across
+// millions of rows is waste.
+//
+// Note this collapses mid-match name changes to the final name. The design doc
+// specifies a full (steamid, name, first_seen_tick) observation table; that is
+// deliberately deferred until a demo with a rename shows it matters.
+func (s *Sink) Players(names map[uint64]string) error {
+	f, err := os.Create(filepath.Join(s.dir, "players.csv"))
+	if err != nil {
+		return fmt.Errorf("create players.csv: %w", err)
+	}
+	defer f.Close()
+
+	w := csv.NewWriter(f)
+	if err := w.Write([]string{"steamid", "name"}); err != nil {
+		return fmt.Errorf("write players header: %w", err)
+	}
+	for id, name := range names {
+		if err := w.Write([]string{strconv.FormatUint(id, 10), name}); err != nil {
+			return fmt.Errorf("write player %d: %w", id, err)
+		}
+	}
+	w.Flush()
+	return w.Error()
+}
