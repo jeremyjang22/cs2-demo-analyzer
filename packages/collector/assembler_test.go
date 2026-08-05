@@ -92,6 +92,10 @@ func TestFinishFlushesPendingRoundAsIncomplete(t *testing.T) {
 	a.roundStart(1000, 12)
 	a.freezeEnd(2000, nil)
 	a.roundEnd(3000, common.TeamTerrorists, events.RoundEndReasonTerroristsWin)
+	// Seed Complete=true so the reset in finish() is observable; the zero value
+	// is already false, so without seeding, finish() could be removed and the
+	// test would still pass.
+	a.cur.Meta.Complete = true
 	a.finish()
 
 	if len(*got) != 1 {
@@ -99,6 +103,33 @@ func TestFinishFlushesPendingRoundAsIncomplete(t *testing.T) {
 	}
 	if (*got)[0].Meta.Complete {
 		t.Error("Complete = true, want false for a flushed partial round")
+	}
+}
+
+// roundEnd has a guard against duplicate calls; the first should win.
+func TestDuplicateRoundEndIgnoresSecond(t *testing.T) {
+	a, got := collect()
+
+	a.roundStart(1000, 1)
+	a.freezeEnd(2000, nil)
+	a.roundEnd(3000, common.TeamTerrorists, events.RoundEndReasonTerroristsWin)
+	// Call roundEnd again with different values; should be ignored.
+	a.roundEnd(3100, common.TeamCounterTerrorists, events.RoundEndReasonCTWin)
+	a.roundEndOfficial(3300)
+
+	if len(*got) != 1 {
+		t.Fatalf("emitted %d rounds, want 1", len(*got))
+	}
+	m := (*got)[0].Meta
+	// First roundEnd wins: EndTick and Winner should be from the first call, not the second.
+	if m.EndTick != 3000 {
+		t.Errorf("EndTick = %d, want 3000 (from first roundEnd)", m.EndTick)
+	}
+	if m.Winner != common.TeamTerrorists {
+		t.Errorf("Winner = %v, want T (from first roundEnd)", m.Winner)
+	}
+	if m.Reason != events.RoundEndReasonTerroristsWin {
+		t.Errorf("Reason = %v, want TerroristsWin (from first roundEnd)", m.Reason)
 	}
 }
 
@@ -111,6 +142,38 @@ func TestFinishWithNoPendingRoundEmitsNothing(t *testing.T) {
 }
 
 // Stray events before the first RoundStart must not panic or emit.
+func TestActiveReturnsTrueWhenRoundOpen(t *testing.T) {
+	a, got := collect()
+
+	if a.active() {
+		t.Error("active() = true before any round opened")
+	}
+
+	a.roundStart(1000, 1)
+	if !a.active() {
+		t.Error("active() = false after roundStart, want true")
+	}
+
+	a.freezeEnd(2000, nil)
+	if !a.active() {
+		t.Error("active() = false in live phase, want true")
+	}
+
+	a.roundEnd(3000, common.TeamTerrorists, events.RoundEndReasonTerroristsWin)
+	if !a.active() {
+		t.Error("active() = false in postround phase, want true")
+	}
+
+	a.roundEndOfficial(3300)
+	if a.active() {
+		t.Error("active() = true after roundEndOfficial flushed the round")
+	}
+
+	if len(*got) != 1 {
+		t.Fatalf("emitted %d rounds, want 1", len(*got))
+	}
+}
+
 func TestEventsBeforeRoundStartAreIgnored(t *testing.T) {
 	a, got := collect()
 
