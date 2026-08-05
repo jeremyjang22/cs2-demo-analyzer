@@ -32,7 +32,7 @@ func main() {
 	}
 }
 
-func run() error {
+func run() (err error) {
 	var (
 		demoPath  = flag.String("demo", "", "path to the .dem file (required)")
 		outDir    = flag.String("out", "out", "output directory")
@@ -65,6 +65,19 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// Guarantee Close() runs - and that a real error from it surfaces -
+	// however run() exits: an early return (e.g. sink.Players failing below)
+	// or a panic unwinding out of c.Run() (demoinfocs re-panics anything that
+	// isn't an unexpected EOF). Close() is idempotent, so this is safe even
+	// though the happy path below also calls it implicitly via this defer
+	// only (no separate explicit call remains). A Close error is only
+	// surfaced here if run() would otherwise have returned nil - an error
+	// already set by the code below takes priority and is not overwritten.
+	defer func() {
+		if cerr := sink.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	// The map name arrives via a net-message before the first frame; v5 removed
 	// the public ParseHeader (see playground/go/cmd/hello-demo for the details).
@@ -78,10 +91,25 @@ func run() error {
 	c := collector.New(parser, sink)
 	c.SetMaxRounds(*maxRounds)
 
+	// TickRate() is unusable at construction time above (parsing hasn't
+	// started, so it always reports <= 0); CSVCMsg_ServerInfo carries the
+	// real value and arrives mid-parse, well before any gameplay frame. Wire
+	// it to both consumers that were built with the too-early value: the
+	// sink's manifest and the collector's velocity tracker.
+	parser.RegisterNetMessageHandler(func(m *msg.CSVCMsg_ServerInfo) {
+		interval := m.GetTickInterval()
+		if interval <= 0 {
+			return
+		}
+		rate := 1 / float64(interval)
+		sink.SetTickRate(rate)
+		c.SetTickRate(rate)
+	})
+
 	start := time.Now()
 	if !*quiet {
 		c.OnRound(func(r *collector.Round) {
-			fmt.Printf("round %2d  ticks %6d  %s\n",
+			fmt.Printf("round %2d  ticks %6d%s\n",
 				r.Meta.Number, len(r.Ticks), completeness(r))
 		})
 	}
@@ -89,9 +117,6 @@ func run() error {
 	runErr := c.Run()
 
 	if err := sink.Players(c.Names()); err != nil {
-		return err
-	}
-	if err := sink.Close(); err != nil {
 		return err
 	}
 	if runErr != nil {
@@ -108,5 +133,5 @@ func completeness(r *collector.Round) string {
 	if r.Meta.Complete {
 		return ""
 	}
-	return "(incomplete)"
+	return "  (incomplete)"
 }

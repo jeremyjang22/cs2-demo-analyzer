@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
@@ -23,7 +24,11 @@ type Collector struct {
 
 	names     map[uint64]string
 	maxRounds int
-	onRound   func(*Round)
+	onRound   []func(*Round)
+
+	// tickGuard suppresses a duplicate sampleFrame for the same ingame tick.
+	// See its doc comment for why this happens.
+	tickGuard sampleGuard
 
 	nRounds int
 	nTicks  int64
@@ -55,7 +60,16 @@ func (c *Collector) SetMaxRounds(n int) { c.maxRounds = n }
 
 // OnRound registers an extra consumer, called before the sink writes. Future
 // analyzers (counterstrafe, spray) hook in here without touching this file.
-func (c *Collector) OnRound(f func(*Round)) { c.onRound = f }
+// May be called more than once; every registered consumer runs, in
+// registration order.
+func (c *Collector) OnRound(f func(*Round)) { c.onRound = append(c.onRound, f) }
+
+// SetTickRate corrects the velocity tracker's tick rate once the real value
+// is known. New() constructs the tracker before parsing starts, when
+// TickRate() is not yet available (see velocityTracker.SetTickRate); the
+// caller should invoke this from a CSVCMsg_ServerInfo net-message handler as
+// soon as parsing reveals the real rate.
+func (c *Collector) SetTickRate(rate float64) { c.vel.SetTickRate(rate) }
 
 func (c *Collector) Stats() (int, int64) { return c.nRounds, c.nTicks }
 
@@ -66,7 +80,7 @@ func (c *Collector) Run() error {
 	err := c.parser.ParseToEnd()
 
 	// A demo that cuts off mid-stream is a partial success: flush what we have.
-	if err != nil && err != demoinfocs.ErrCancelled {
+	if err != nil && !errors.Is(err, demoinfocs.ErrCancelled) {
 		c.asm.finish()
 		if c.err != nil {
 			return c.err
@@ -82,8 +96,8 @@ func (c *Collector) emitRound(r *Round) {
 	if c.err != nil {
 		return
 	}
-	if c.onRound != nil {
-		c.onRound(r)
+	for _, f := range c.onRound {
+		f(r)
 	}
 	if err := c.sink.Round(r); err != nil {
 		c.err = err
@@ -116,11 +130,15 @@ func (c *Collector) register() {
 			return
 		}
 		c.asm.roundStart(c.tick(), int32(c.parser.GameState().TotalRoundsPlayed()+1))
-		c.vel.reset() // players teleport to spawn; prior positions are meaningless
+		c.vel.reset()       // players teleport to spawn; prior positions are meaningless
+		c.tickGuard.reset() // new round: the first tick sampled in it must never be treated as a repeat
 		c.readTimeout()
 	})
 
 	c.parser.RegisterEventHandler(func(events.RoundFreezetimeEnd) {
+		if !c.asm.active() {
+			return // no open round (e.g. warmup): skip snapshotEconomy rather than walking every participant for a result that would be discarded
+		}
 		c.asm.freezeEnd(c.tick(), c.snapshotEconomy())
 	})
 
@@ -151,11 +169,14 @@ func (c *Collector) sampleFrame() {
 		return
 	}
 	tick := c.tick()
+	if !c.tickGuard.shouldSample(tick) {
+		return
+	}
 	phase := c.asm.phase()
 	round := c.asm.cur.Meta.Number
 
 	for _, p := range c.parser.GameState().Participants().Playing() {
-		if p == nil {
+		if !includeParticipant(p) {
 			continue
 		}
 		if p.Name != "" {
@@ -178,6 +199,7 @@ func (c *Collector) sampleFrame() {
 			X: x, Y: y, Z: z,
 			Yaw: p.ViewDirectionX(), Pitch: p.ViewDirectionY(),
 			VelX: vx, VelY: vy, VelZ: vz, Speed: speed, VelValid: valid,
+			Buttons:    p.ButtonsPressedState,
 			IsDucking:  p.IsDucking(),
 			IsWalking:  p.IsWalking(),
 			IsAirborne: p.IsAirborne(),
@@ -225,7 +247,7 @@ func (c *Collector) snapshotEconomy() []PlayerRound {
 	players := c.parser.GameState().Participants().Playing()
 	out := make([]PlayerRound, 0, len(players))
 	for _, p := range players {
-		if p == nil {
+		if !includeParticipant(p) {
 			continue
 		}
 		out = append(out, PlayerRound{
@@ -274,3 +296,42 @@ func (c *Collector) readTimeout() {
 		c.asm.setTimeout(common.TeamCounterTerrorists)
 	}
 }
+
+// includeParticipant reports whether p is a real player worth sampling.
+// Participants().Playing() can return a non-player entity alongside real
+// players - observed in practice as a "Crew" participant with SteamID64 0 -
+// which would otherwise collide with every other unauthenticated entity
+// under the (round, tick, steamid) key and inflate roster counts. Nil
+// entries are also guarded against defensively.
+func includeParticipant(p *common.Player) bool {
+	return p != nil && p.SteamID64 != 0
+}
+
+// sampleGuard suppresses a duplicate sampleFrame call for the same ingame
+// tick. FrameDone fires once per demo frame, and demoinfocs emits a frame
+// for DEM_FullPacket as well as DEM_Packet - both carrying the same ingame
+// tick on periodic keyframe ticks. Without this, every (round, tick,
+// steamid) row on such a tick would be written twice, and the second
+// velocityTracker.compute() call would zero out (it hits the tick <=
+// prev.tick guard), so a naive downstream de-dup on the full row would not
+// collapse the pair back to one correct sample.
+type sampleGuard struct {
+	lastTick int32
+	have     bool
+}
+
+// shouldSample reports whether tick is new since the last call, recording it
+// if so.
+func (g *sampleGuard) shouldSample(tick int32) bool {
+	if g.have && tick == g.lastTick {
+		return false
+	}
+	g.lastTick = tick
+	g.have = true
+	return true
+}
+
+// reset drops the tracked tick, called at round boundaries so a new round's
+// first sampled tick is never mistaken for a repeat of whatever tick the
+// prior round last sampled.
+func (g *sampleGuard) reset() { g.have = false }

@@ -375,6 +375,122 @@ func TestRoundPlayersCSVHeaderMatchesRoundPlayerColumns(t *testing.T) {
 	}
 }
 
+// Close() must be safe to call twice: main.go calls it via defer even on the
+// happy path, where an explicit call may also exist during a transition
+// period. Without an idempotency guard the second call double-closes
+// s.ticksFile, which returns an error the second time around.
+func TestCloseIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(dir, Meta{DemoFile: "test.dem", Map: "de_mirage", TickRate: 64})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := s.Round(testRound()); err != nil {
+		t.Fatalf("Round: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Errorf("second Close: %v, want nil (Close must be idempotent)", err)
+	}
+}
+
+// SetTickRate must reach the manifest, mirroring how SetMap already reaches
+// it for the map name.
+func TestSetTickRateUpdatesManifest(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(dir, Meta{DemoFile: "test.dem", Map: "de_mirage", TickRate: -1})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	s.SetTickRate(128)
+	if err := s.Round(testRound()); err != nil {
+		t.Fatalf("Round: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var m manifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	if m.TickRate != 128 {
+		t.Errorf("TickRate = %v, want 128", m.TickRate)
+	}
+	if m.TickRateSource != "measured" {
+		t.Errorf("TickRateSource = %q, want %q when SetTickRate was called with a positive value", m.TickRateSource, "measured")
+	}
+}
+
+// If CSVCMsg_ServerInfo never arrives, SetTickRate is never called, and the
+// manifest must make that visible rather than silently reporting a default
+// as if it were measured.
+func TestUnresolvedTickRateIsVisibleInManifest(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(dir, Meta{DemoFile: "test.dem", Map: "de_mirage", TickRate: -1})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	// SetTickRate deliberately never called.
+	if err := s.Round(testRound()); err != nil {
+		t.Fatalf("Round: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var m manifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	if m.TickRate > 0 {
+		t.Errorf("TickRate = %v, want <= 0 when never resolved (must not silently default to look measured)", m.TickRate)
+	}
+	if m.TickRateSource != "unknown" {
+		t.Errorf("TickRateSource = %q, want %q when the tick rate was never resolved", m.TickRateSource, "unknown")
+	}
+}
+
+// players.csv rows come from Go map iteration, which is randomized per run.
+// Sorting by steamid makes the file byte-reproducible across runs of the
+// same demo.
+func TestPlayersSortedBySteamID(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(dir, Meta{DemoFile: "test.dem", Map: "de_mirage", TickRate: 64})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	names := map[uint64]string{
+		300: "charlie",
+		100: "alice",
+		200: "bob",
+	}
+	if err := s.Players(names); err != nil {
+		t.Fatalf("Players: %v", err)
+	}
+
+	rows := readCSV(t, filepath.Join(dir, "players.csv"))
+	if len(rows) != 4 { // header + 3 players
+		t.Fatalf("players.csv has %d rows, want 4", len(rows))
+	}
+	wantOrder := []string{"100", "200", "300"}
+	for i, want := range wantOrder {
+		if got := rows[i+1][0]; got != want {
+			t.Errorf("row %d steamid = %q, want %q (players.csv must be sorted by steamid)", i+1, got, want)
+		}
+	}
+}
+
 func TestRoundPlayersCSVValuesLandInClaimedColumns(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := New(dir, Meta{DemoFile: "test.dem", Map: "de_mirage", TickRate: 64})

@@ -18,9 +18,22 @@ type sample struct {
 
 func newVelocityTracker(tickRate float64) *velocityTracker {
 	if tickRate <= 0 {
-		tickRate = 64 // demos with a corrupt header report -1
+		tickRate = 64 // demos with a corrupt header report -1; corrected later via SetTickRate if the real value arrives
 	}
 	return &velocityTracker{tickRate: tickRate, last: make(map[uint64]sample, 16)}
+}
+
+// SetTickRate corrects the tick rate once the real value is known. The
+// constructor runs before parsing starts (TickRate() is unavailable until
+// CSVCMsg_ServerInfo arrives mid-parse), so it may have installed the
+// hardcoded fallback above; this lets the caller fix that up as soon as the
+// real rate is observed. Non-positive values are ignored so a not-yet-known
+// reading can never downgrade an already-known rate.
+func (v *velocityTracker) SetTickRate(tickRate float64) {
+	if tickRate <= 0 {
+		return
+	}
+	v.tickRate = tickRate
 }
 
 // compute returns velocity in units/sec. valid is false when there is no usable

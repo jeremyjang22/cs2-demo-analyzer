@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 
 	"github.com/jeremyjang22/cs2-demo-analyzer/packages/collector"
@@ -34,10 +35,18 @@ type Meta struct {
 }
 
 type manifest struct {
-	SchemaVersion  string              `json:"schema_version"`
-	DemoFile       string              `json:"demo_file"`
-	Map            string              `json:"map"`
-	TickRate       float64             `json:"tick_rate"`
+	SchemaVersion string  `json:"schema_version"`
+	DemoFile      string  `json:"demo_file"`
+	Map           string  `json:"map"`
+	TickRate      float64 `json:"tick_rate"`
+	// TickRateSource is "measured" when TickRate came from the demo's
+	// CSVCMsg_ServerInfo net-message (via SetTickRate), or "unknown" when
+	// that message was never observed - in which case TickRate is whatever
+	// was known at construction (typically <= 0) and velocity math fell back
+	// to a hardcoded default internally. Never "measured" for a value that
+	// was actually guessed, so a wrong number can't be mistaken for one that
+	// was verified.
+	TickRateSource string              `json:"tick_rate_source"`
 	Rounds         int                 `json:"rounds"`
 	TickRows       int64               `json:"tick_rows"`
 	Complete       bool                `json:"complete"`
@@ -64,6 +73,7 @@ type Sink struct {
 	nRounds  int
 	nTicks   int64
 	complete bool
+	closed   bool // guards Close() against double-closing its files on a second call
 }
 
 var _ collector.Sink = (*Sink)(nil)
@@ -196,6 +206,11 @@ func (s *Sink) Round(r *collector.Round) error {
 // records final counts and a "complete" flag that would be misleading to
 // write after a failed close.
 func (s *Sink) Close() error {
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+
 	var first error
 	record := func(step string, err error) {
 		if err != nil && first == nil {
@@ -223,11 +238,22 @@ func (s *Sink) Close() error {
 }
 
 func (s *Sink) writeManifest() error {
+	// TickRate is only ever set to a real value via SetTickRate, called from
+	// a CSVCMsg_ServerInfo handler. If that never fired, TickRate is still
+	// whatever was passed to New() (typically <= 0, since it's read before
+	// parsing starts) - a value visibly distinct from any real tick rate,
+	// rather than a hardcoded default masquerading as a measurement.
+	tickRateSource := "measured"
+	if s.meta.TickRate <= 0 {
+		tickRateSource = "unknown"
+	}
+
 	m := manifest{
 		SchemaVersion:  schemaVersion,
 		DemoFile:       s.meta.DemoFile,
 		Map:            s.meta.Map,
 		TickRate:       s.meta.TickRate,
+		TickRateSource: tickRateSource,
 		Rounds:         s.nRounds,
 		TickRows:       s.nTicks,
 		Complete:       s.complete,
@@ -261,6 +287,14 @@ func boolStr(v bool) string {
 // to call any time before Close, which is when the manifest is written.
 func (s *Sink) SetMap(name string) { s.meta.Map = name }
 
+// SetTickRate records the demo's real tick rate. Like SetMap, this arrives
+// from a net-message (CSVCMsg_ServerInfo) after the sink is constructed -
+// TickRate() is unusable before parsing starts, always reporting <= 0. Safe
+// to call any time before Close, which is when the manifest is written and
+// derives tick_rate_source from whether this was ever called with a
+// positive value.
+func (s *Sink) SetTickRate(rate float64) { s.meta.TickRate = rate }
+
 // Players writes players.csv: one row per steamid, holding their last-seen
 // name. Names live here rather than on tick rows because repeating them across
 // millions of rows is waste.
@@ -279,8 +313,17 @@ func (s *Sink) Players(names map[uint64]string) error {
 	if err := w.Write([]string{"steamid", "name"}); err != nil {
 		return fmt.Errorf("write players header: %w", err)
 	}
-	for id, name := range names {
-		if err := w.Write([]string{strconv.FormatUint(id, 10), name}); err != nil {
+
+	// Go map iteration order is randomized, so writing directly from names
+	// would make players.csv non-reproducible across runs of the same demo.
+	ids := make([]uint64, 0, len(names))
+	for id := range names {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	for _, id := range ids {
+		if err := w.Write([]string{strconv.FormatUint(id, 10), names[id]}); err != nil {
 			return fmt.Errorf("write player %d: %w", id, err)
 		}
 	}

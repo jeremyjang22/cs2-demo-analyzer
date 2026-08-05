@@ -99,3 +99,42 @@ func TestSameTickIsInvalid(t *testing.T) {
 		t.Error("valid = true for a zero-duration sample, want false")
 	}
 }
+
+// SetTickRate must actually change the dt used in compute(), not just be
+// accepted and ignored - otherwise every velocity value computed before the
+// real CSVCMsg_ServerInfo tick rate arrives (and after, if the field were
+// unused) stays silently wrong for any demo that isn't 64-tick.
+func TestSetTickRateCorrectsFallback(t *testing.T) {
+	v := newVelocityTracker(-1) // constructor falls back to the hardcoded 64
+	v.compute(7, 100, 0, 0, 0)
+	v.SetTickRate(128) // real rate arrives mid-parse, corrects the fallback
+	// 10 units in 1 tick at 128 tick/s -> 1280 units/sec (would be 640 at
+	// the uncorrected fallback of 64).
+	vx, _, _, speed, valid := v.compute(7, 101, 10, 0, 0)
+	if !valid {
+		t.Fatal("valid = false, want true")
+	}
+	if math.Abs(float64(vx)-1280) > 0.01 {
+		t.Errorf("vx = %v, want 1280 (SetTickRate must affect subsequent compute() calls)", vx)
+	}
+	if math.Abs(float64(speed)-1280) > 0.01 {
+		t.Errorf("speed = %v, want 1280", speed)
+	}
+}
+
+// A not-yet-known reading (<= 0, e.g. a demo whose ServerInfo carries no
+// tick_interval) must never downgrade an already-installed rate.
+func TestSetTickRateIgnoresNonPositive(t *testing.T) {
+	v := newVelocityTracker(64)
+	v.SetTickRate(0)
+	v.SetTickRate(-1)
+	v.compute(7, 100, 0, 0, 0)
+	vx, _, _, _, valid := v.compute(7, 101, 10, 0, 0)
+	if !valid {
+		t.Fatal("valid = false, want true")
+	}
+	// Still 640 (10 units / 1 tick at 64 tick/s): the rate must be unchanged.
+	if math.Abs(float64(vx)-640) > 0.01 {
+		t.Errorf("vx = %v, want 640 (non-positive SetTickRate calls must be ignored)", vx)
+	}
+}
