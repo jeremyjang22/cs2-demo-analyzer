@@ -20,7 +20,7 @@ from radar import RadarMap
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_DEMO_DIR = REPO_ROOT / "out" / "05-11-2026_mirage_44-32-10"
-RADAR_DIR = REPO_ROOT / "data" / "radar"
+RADAR_DIR = REPO_ROOT / "assets" / "radar"
 
 # Only the columns the plot needs. ticks.csv.gz is ~3.2M rows, and skipping the
 # other 24 columns is the difference between a snappy run and a slow one.
