@@ -29,7 +29,9 @@ class RadarMap:
         for path in (self.image_path, self.meta_path):
             if not path.exists():
                 raise FileNotFoundError(
-                    f"missing radar asset {path} — see data/radar/README.md"
+                    f"missing radar asset for {map_name}: {path}\n"
+                    f"add {map_name}.png and {map_name}.txt to {Path(radar_dir)} "
+                    f"— see the README there for where to get them"
                 )
 
         meta = _parse_overview_txt(self.meta_path)
@@ -37,8 +39,50 @@ class RadarMap:
         self.pos_y = float(meta["pos_y"])
         self.scale = float(meta["scale"])
 
-        self.image = Image.open(self.image_path)
+        # Multi-level maps split by altitude. Every section shares one
+        # pos_x/pos_y/scale — only the background image differs — so the
+        # world->pixel transform below is the same whichever floor you are on.
+        self.sections = {}
+        for name, bounds in (meta.get("verticalsections") or {}).items():
+            if isinstance(bounds, dict):
+                self.sections[name] = (float(bounds["AltitudeMin"]),
+                                       float(bounds["AltitudeMax"]))
+
+        self.images = {"default": Image.open(self.image_path)}
+        for name in self.sections:
+            if name == "default":
+                continue
+            extra = self.image_path.with_name(f"{map_name}_{name}.png")
+            if not extra.exists():
+                raise FileNotFoundError(
+                    f"{map_name} declares a '{name}' section but {extra} is missing"
+                )
+            self.images[name] = Image.open(extra)
+
+        self.image = self.images["default"]
         self.width, self.height = self.image.size
+
+    @property
+    def is_multi_level(self) -> bool:
+        return len(self.images) > 1
+
+    @property
+    def section_names(self) -> list:
+        """Section names, "default" first, then the rest highest floor down.
+
+        Callers index into this list to identify a floor, so the order is part
+        of the contract — keep it stable.
+        """
+        rest = sorted((n for n in self.images if n != "default"),
+                      key=lambda n: -self.sections[n][1])
+        return ["default"] + rest
+
+    def section_for(self, z) -> str:
+        """Which radar image a point at altitude `z` belongs on."""
+        for name, (lo, hi) in self.sections.items():
+            if lo <= z < hi:
+                return name
+        return "default"
 
     @property
     def extent(self):
@@ -61,15 +105,17 @@ class RadarMap:
         """
         return (world_x - self.pos_x) / self.scale, (self.pos_y - world_y) / self.scale
 
-    def draw(self, ax=None, dim=0.55):
+    def draw(self, ax=None, dim=0.55, section="default"):
         """Draw the radar as a plot background and return the axes.
 
         `dim` fades the radar so trajectory colors stay readable on top of it.
+        `section` picks the floor on multi-level maps — see `section_for`.
         """
         if ax is None:
             _, ax = plt.subplots(figsize=(10, 10))
 
-        ax.imshow(self.image, extent=self.extent, origin="upper", alpha=dim, zorder=0)
+        image = self.images.get(section, self.image)
+        ax.imshow(image, extent=self.extent, origin="upper", alpha=dim, zorder=0)
         ax.set_aspect("equal")
         ax.set_xlim(self.extent[0], self.extent[1])
         ax.set_ylim(self.extent[2], self.extent[3])
@@ -78,17 +124,40 @@ class RadarMap:
 
 
 def _parse_overview_txt(path: Path) -> dict:
-    """Pull "key" "value" pairs out of a Valve overview .txt (a KeyValues file).
+    """Parse a Valve overview .txt (KeyValues) into a nested dict.
 
-    A real KeyValues parser is overkill here: the file is one flat block and we
-    only need three scalars from it. Comments trail the values, so anchor the
-    match on the quoted pair and ignore the rest of the line.
+    This has to handle nesting, not just flat pairs: multi-level maps (Nuke,
+    Vertigo, Train) carry a "verticalsections" block with one sub-block per
+    floor. Flattening it would let the second section's AltitudeMin/Max
+    overwrite the first's, leaving no way to tell the floors apart.
     """
-    text = path.read_text(encoding="utf-8", errors="replace")
-    pairs = re.findall(r'"([^"]+)"\s+"([^"]*)"', text)
-    meta = dict(pairs)
+    text = re.sub(r"//[^\n]*", "", path.read_text(encoding="utf-8", errors="replace"))
+    tokens = [quoted or brace for quoted, brace in re.findall(r'"([^"]*)"|([{}])', text)]
 
-    missing = {"pos_x", "pos_y", "scale"} - meta.keys()
+    pos = 0
+
+    def block() -> dict:
+        nonlocal pos
+        out = {}
+        while pos < len(tokens):
+            key = tokens[pos]
+            pos += 1
+            if key == "}":
+                break
+            if pos < len(tokens) and tokens[pos] == "{":
+                pos += 1
+                out[key] = block()
+            elif pos < len(tokens):
+                out[key] = tokens[pos]
+                pos += 1
+        return out
+
+    root = block()
+    # The file wraps everything in a single block named after the map.
+    while len(root) == 1 and isinstance(next(iter(root.values())), dict):
+        root = next(iter(root.values()))
+
+    missing = {"pos_x", "pos_y", "scale"} - root.keys()
     if missing:
         raise ValueError(f"{path} is missing required key(s): {sorted(missing)}")
-    return meta
+    return root
