@@ -1,15 +1,10 @@
-"""Build a standalone HTML viewer for player movement across rounds and demos.
+"""Generate a standalone HTML movement viewer (legacy).
 
-    python build_movement_viewer.py                          # the default demo
-    python build_movement_viewer.py --demo-dir A B C         # merge several
+Superseded by export_movement.py plus packages/web, which keep the data and the
+app that draws it separate. Kept working during the migration so there is a
+fallback that needs no toolchain; delete once the web app is proven.
 
-Produces one self-contained .html — radar image and positions are embedded, so
-it opens straight off disk with no server. Answers "where is this player N
-seconds into the round?" across every round you feed it.
-
-Positions are resampled to one point per second from each round's first live
-tick. That is a ~64x reduction and is the natural grain for the question; the
-viewer interpolates between samples so playback still looks smooth.
+    python build_movement_viewer.py --demo anubispug
 """
 
 import argparse
@@ -17,184 +12,10 @@ import base64
 import json
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
-
+import movement_payload as mp
+from movement_payload import (DEFAULT_HZ, OUT_ROOT, RADAR_DIR, REPO_ROOT, SERIES,
+                              build_payload, resolve_demo_dirs)
 from radar import RadarMap
-
-REPO_ROOT = Path(__file__).resolve().parents[4]
-RADAR_DIR = REPO_ROOT / "assets" / "radar"
-OUT_ROOT = REPO_ROOT / "out"
-
-# Categorical slots 1-3 from the validated dark palette. Three is the cap for
-# scatter-type forms: past that, adjacent pairs stop clearing the colorblind
-# separation floor, so the UI blocks a 4th selection rather than inventing a hue.
-SERIES = ["#3987e5", "#d95926", "#199e70"]
-
-# Samples per second. Straight lines are drawn between samples, so this is a
-# geometry setting as much as a size one: at 1 Hz a sprinting player moves ~250
-# units between samples and the chord cuts visibly through corners. 4 Hz keeps
-# 97% of the true path length with a worst-case 65-unit gap (a player is 32
-# units wide), which is the point where clipping stops being noticeable.
-DEFAULT_HZ = 4.0
-T, CT = 2, 3
-
-# demoinfocs RoundEndReason values seen in this data.
-REASONS = {1: "bomb detonated", 7: "bomb defused", 8: "CT elimination",
-           9: "T elimination", 11: "T surrender", 12: "CT surrender"}
-
-
-def split_teams(round_players: pd.DataFrame):
-    """Identify the two rosters so score survives the halftime side swap.
-
-    Sides switch at halftime, so counting T wins against CT wins would describe
-    two groups that each contain everybody. Anchor on round 1's rosters instead
-    and, for every later round, ask which side that roster is currently on.
-    """
-    first = round_players[round_players["round"] == round_players["round"].min()]
-    return set(first.loc[first.team == T, "steamid"]), set(first.loc[first.team == CT, "steamid"])
-
-
-def load_demo(demo_dir: Path, sample_hz: float, radar: RadarMap):
-    """Read one demo's output into (manifest, rounds_meta, tracks_by_player)."""
-    manifest = json.loads((demo_dir / "manifest.json").read_text())
-    tick_rate = manifest["tick_rate"]
-
-    rounds_df = pd.read_csv(demo_dir / "rounds.csv")
-    round_players = pd.read_csv(demo_dir / "round_players.csv")
-    names = pd.read_csv(demo_dir / "players.csv").set_index("steamid")["name"].to_dict()
-
-    roster_a, _ = split_teams(round_players)
-    survived = {(r.round, r.steamid): int(r.survived) for r in round_players.itertuples()}
-
-    rounds_meta, score_a, score_b = {}, 0, 0
-    for row in rounds_df.itertuples():
-        present = round_players[round_players["round"] == row.number]
-        in_a = present[present.steamid.isin(roster_a)]
-        # Which side is roster A on this round? Majority vote tolerates a
-        # disconnect or a late join without flipping the whole scoreboard.
-        side_a = int(in_a.team.mode().iloc[0]) if not in_a.empty else T
-
-        if row.winner == side_a:
-            score_a += 1
-        else:
-            score_b += 1
-
-        rounds_meta[int(row.number)] = {
-            "n": int(row.number),
-            "dur": round((row.end_tick - row.freeze_end_tick) / tick_rate, 1),
-            "w": int(row.winner),
-            "why": REASONS.get(int(row.reason), f"reason {row.reason}"),
-            "sa": score_a, "sb": score_b,
-            "aw": int(row.winner == side_a),      # did roster A take it
-            "ok": int(row.complete),
-        }
-
-    ticks = pd.read_csv(
-        demo_dir / "ticks.csv.gz",
-        usecols=["round", "tick", "steamid", "team", "x", "y", "z",
-                 "is_alive", "is_airborne", "phase"],
-    )
-    live = ticks[ticks["phase"] == "live"]
-    step = tick_rate / sample_hz
-    sections = radar.section_names
-
-    tracks = {}
-    for steamid, per_player in live.groupby("steamid"):
-        out = []
-        for rnd, g in per_player.groupby("round"):
-            g = g.sort_values("tick")
-            alive = g[g["is_alive"] == 1]
-            if alive.empty or int(rnd) not in rounds_meta:
-                continue  # joined late, or a round the collector dropped
-
-            # Snap each whole second to its nearest real tick rather than
-            # interpolating here — an interpolated sample can sit inside a wall.
-            offsets = (alive["tick"] - alive["tick"].iloc[0]).to_numpy()
-            idx = np.searchsorted(offsets, np.arange(0, offsets[-1] + 1, step))
-            idx = idx.clip(0, len(offsets) - 1)
-            picked = alive.iloc[idx]
-
-            out.append({
-                "r": int(rnd),
-                "s": int(g["team"].iloc[0]),
-                "d": len(idx) - 1 if (g["is_alive"] == 0).any() else -1,
-                "sv": survived.get((int(rnd), steamid), 0),
-                "x": [int(round(v)) for v in picked["x"]],
-                "y": [int(round(v)) for v in picked["y"]],
-                # One char per sample. A string costs ~1 byte per sample where a
-                # JSON array of ints costs two, and it gzips just as well.
-                "air": "".join("1" if v else "0" for v in picked["is_airborne"]),
-                # Which radar image each sample belongs on. Always "0" on
-                # single-level maps; on Nuke/Vertigo/Train it flips mid-round.
-                "lvl": "".join(str(sections.index(radar.section_for(v)))
-                               for v in picked["z"]),
-            })
-        if out:
-            tracks[steamid] = (names.get(steamid, str(steamid)), out)
-
-    return manifest, rounds_meta, tracks
-
-
-def assign_colors(players):
-    """Give each player one of the five minimap colour slots, per starting side.
-
-    The real value lives in the demo — demoinfocs exposes it as
-    Player.ColorOrErr() off m_iCompTeammateColor — but the collector does not
-    write it to ticks.csv yet, so this stands in with the same shape: five
-    slots, assigned within a side. Once the collector emits a colour column,
-    read it here instead and the viewer needs no change.
-    """
-    for side in (T, CT):
-        members = [p for p in players if p["rounds"] and p["rounds"][0]["s"] == side]
-        for slot, p in enumerate(sorted(members, key=lambda p: p["id"])):
-            p["col"] = slot % 5
-            p["side0"] = side
-
-
-def build_payload(demo_dirs, radar: RadarMap, sample_hz: float) -> dict:
-    """Merge any number of demos into one payload, joining players by steamid."""
-    demos, rounds, players = [], {}, {}
-    map_name, tick_rate, max_samples = None, None, 0
-
-    for di, demo_dir in enumerate(demo_dirs):
-        manifest, rounds_meta, tracks = load_demo(demo_dir, sample_hz, radar)
-
-        if map_name is None:
-            map_name, tick_rate = manifest["map"], manifest["tick_rate"]
-        elif manifest["map"] != map_name:
-            raise SystemExit(
-                f"{demo_dir.name} is {manifest['map']}, not {map_name} — "
-                "positions are only comparable within one map"
-            )
-
-        demos.append({"i": di, "label": demo_dir.name, "rounds": len(rounds_meta)})
-        for n, meta in rounds_meta.items():
-            rounds[f"{di}:{n}"] = {**meta, "dm": di}
-
-        for steamid, (name, out) in tracks.items():
-            p = players.setdefault(str(steamid), {"id": str(steamid), "name": name, "rounds": []})
-            p["name"] = name  # later demos win; players.csv stores last-seen name
-            for r in out:
-                r["dm"] = di
-                r["k"] = f"{di}:{r['r']}"
-                max_samples = max(max_samples, len(r["x"]))
-            p["rounds"].extend(out)
-
-    ordered = sorted(players.values(), key=lambda p: (-len(p["rounds"]), p["name"].lower()))
-    assign_colors(ordered)
-    return {
-        "map": map_name,
-        "radar": {"pos_x": radar.pos_x, "pos_y": radar.pos_y,
-                  "scale": radar.scale, "size": radar.width},
-        "tick_rate": tick_rate,
-        "sample_hz": sample_hz,
-        "sections": radar.section_names,
-        "max_sec": round((max_samples - 1) / sample_hz, 1),
-        "demos": demos,
-        "rounds": rounds,
-        "players": ordered,
-    }
 
 
 def render_html(payload: dict, radar: RadarMap) -> str:
@@ -316,6 +137,11 @@ TEMPLATE = r"""<!doctype html>
       <button data-v="trail" aria-pressed="false">Trails</button>
       <button data-v="full" aria-pressed="false">All paths</button>
     </div>
+    <div class="seg" id="cones" style="margin-top:4px">
+      <button data-v="on" aria-pressed="true">View cones</button>
+      <button data-v="off" aria-pressed="false">Off</button>
+    </div>
+    <div class="hint">90&deg; cone where they are looking; narrow and long when scoped.</div>
   </fieldset>
 
   <fieldset><legend>Playback</legend>
@@ -363,9 +189,16 @@ const SURFACE = "#1a1a19", SIZE = 900, TRAIL_SEC = 8;
 const GAME_COLORS = ["#F2C94C", "#B769D6", "#4CC94C", "#4E9BE8", "#F09A3E"];
 const AIRBORNE = "#ffffff";   // a state, not an identity — same for every player
 
+// View cone. CS2's default horizontal FOV is 90 degrees; scoped is far
+// narrower, and a scoped player is watching a long angle, so that cone is drawn
+// narrow and long. Only is_scoped is in the data, not the zoom level, so the
+// scoped numbers stand for "zoomed" generally rather than a specific optic.
+const FOV_DEG = 90, FOV_SCOPED_DEG = 22;
+const CONE_PX = 30, CONE_SCOPED_PX = 62;
+
 let selected = [DATA.players[0].id];
 let side = "all", mode = "dots", sec = 0, speed = 1, playing = false;
-let palette = "game";
+let palette = "game", cones = true;
 let roundSel = new Set(Object.keys(DATA.rounds));
 
 // One canvas per floor. Multi-level maps (Nuke, Vertigo, Train) get them side
@@ -483,6 +316,7 @@ function seg(id, set) {
 }
 seg("side", v => side = v);
 seg("mode", v => mode = v);
+seg("cones", v => cones = v === "on");
 seg("palette", v => {
   palette = v;
   if (selected.length > maxSelected()) selected = selected.slice(0, maxSelected());
@@ -502,10 +336,16 @@ $("pp").parentElement.querySelector(".seg").addEventListener("click", e => {
 $("time").addEventListener("input", e => { sec = +e.target.value; pause(); paint(); });
 $("pp").addEventListener("click", () => playing ? pause() : play());
 
-let raf = null, last = 0;
+let raf = null, last = null;
 function play() {
   if (mode === "full") return;           // nothing to animate in the overlay view
-  playing = true; $("pp").textContent = "❚❚"; last = performance.now();
+  playing = true; $("pp").textContent = "❚❚";
+  // Deliberately NOT performance.now(): the rAF timestamp is the time the frame
+  // began, which can precede a reading taken inside this click handler. Mixing
+  // the two produced a negative first delta (measured at -14ms), which drove
+  // sec below zero and NaN'd the whole render. Let the first frame set the
+  // baseline from the same clock every later frame uses.
+  last = null;
   raf = requestAnimationFrame(tick);
 }
 function pause() {
@@ -514,7 +354,11 @@ function pause() {
 }
 function tick(now) {
   if (!playing) return;
-  sec += (now - last) / 1000 * speed; last = now;
+  if (last === null) last = now;
+  const dt = Math.max(0, now - last);    // never run time backwards
+  last = now;
+
+  sec += dt / 1000 * speed;
   if (sec > DATA.max_sec) sec = 0;       // loop
   $("time").value = sec;
   paint();
@@ -534,10 +378,48 @@ const idxAt = t => t * HZ;
 const lengthSec = r => (r.x.length - 1) / HZ;
 const deadAt = (r, t) => r.d >= 0 && idxAt(t) >= r.d;
 
+// Clamped at zero so a sample index can never go negative: r.x[-1] is
+// undefined, which turns every downstream coordinate into NaN, and canvas
+// gradients throw on non-finite input rather than skipping the draw.
 function at(r, t) {
-  const s = idxAt(t), i = Math.floor(s), f = s - i;
+  const s = Math.max(0, idxAt(t)), i = Math.floor(s), f = s - i;
   if (i >= r.x.length - 1) return [r.x.at(-1), r.y.at(-1)];
   return [r.x[i] + (r.x[i+1]-r.x[i]) * f, r.y[i] + (r.y[i+1]-r.y[i]) * f];
+}
+
+// Yaw is [-180, 180] and wraps, so a plain lerp between +179 and -179 spins the
+// cone 358 degrees the wrong way. Take the shortest signed arc instead — the
+// same wrap rule as yaw_delta() on the Python side.
+function yawAt(r, t) {
+  const s = Math.max(0, idxAt(t)), i = Math.floor(s), f = s - i;
+  if (i >= r.yaw.length - 1) return r.yaw.at(-1);
+  const a = r.yaw[i], d = ((r.yaw[i+1] - a + 540) % 360) - 180;
+  return a + d * f;
+}
+
+// World yaw runs counter-clockwise from +X; canvas y grows downward, so the
+// screen angle is the negation. Everything else is a plain wedge.
+function drawCone(c, X, Y, yaw, scoped, color) {
+  const half = (scoped ? FOV_SCOPED_DEG : FOV_DEG) / 2 * Math.PI / 180;
+  const reach = scoped ? CONE_SCOPED_PX : CONE_PX;
+  const mid = -yaw * Math.PI / 180;
+
+  // Hold the colour most of the way out and fade only near the tip. A gradient
+  // that starts fading at the origin averages out to almost nothing and the
+  // cone stops reading as a direction.
+  const grad = c.createRadialGradient(X, Y, 0, X, Y, reach);
+  grad.addColorStop(0, color);
+  grad.addColorStop(0.62, color);
+  grad.addColorStop(1, "transparent");
+
+  c.beginPath();
+  c.moveTo(X, Y);
+  c.arc(X, Y, reach, mid - half, mid + half);
+  c.closePath();
+  c.globalAlpha = 0.42;
+  c.fillStyle = grad;
+  c.fill();
+  c.globalAlpha = 1;
 }
 // Walk the path in runs where both the floor and the airborne state hold
 // steady. The floor picks which canvas the run lands on; airborne picks the
@@ -569,10 +451,16 @@ function drawPath(r, from, to, color, alpha) {
 
 function drawDot(r, t, color, ct) {
   const [wx, wy] = at(r, t), X = tx(wx), Y = ty(wy);
-  const i = Math.floor(idxAt(t));
+  const i = Math.max(0, Math.floor(idxAt(t)));
   const dead = deadAt(r, t), air = r.air[i] === "1";
   const lvl = +(r.lvl[Math.min(i, r.lvl.length - 1)] || 0);
   const c = CTX[lvl] || CTX[0];
+
+  // Cones go under the marker, and only for the living — a corpse's last view
+  // angle is frozen state, not something the player is doing.
+  if (cones && !dead) {
+    drawCone(c, X, Y, yawAt(r, t), r.sc[Math.min(i, r.sc.length - 1)] === "1", color);
+  }
 
   c.beginPath(); c.arc(X, Y, 5, 0, 7);
   c.lineWidth = 2; c.strokeStyle = SURFACE; c.stroke();   // separates overlaps
@@ -680,7 +568,7 @@ def main():
         demo_dirs = [OUT_ROOT / "nukepug"]
     check_demo_dirs(demo_dirs)
 
-    first = json.loads((demo_dirs[0] / "manifest.json").read_text())
+    first = json.loads((demo_dirs[0] / 'manifest.json').read_text())
     radar = RadarMap(first["map"], RADAR_DIR)
 
     payload = build_payload(demo_dirs, radar, args.hz)

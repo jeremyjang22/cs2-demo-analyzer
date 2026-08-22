@@ -8,7 +8,6 @@ colorbar runs from round start to round end.
 """
 
 import argparse
-import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -16,14 +15,15 @@ import numpy as np
 import pandas as pd
 from matplotlib.collections import LineCollection
 
+import demo_data
 from radar import RadarMap
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_DEMO_DIR = REPO_ROOT / "out" / "05-11-2026_mirage_44-32-10"
 RADAR_DIR = REPO_ROOT / "assets" / "radar"
 
-# Only the columns the plot needs. ticks.csv.gz is ~3.2M rows, and skipping the
-# other 24 columns is the difference between a snappy run and a slow one.
+# Only the columns the plot needs. The tick table is ~3.2M rows, and skipping
+# the other 22 columns is the difference between a snappy run and a slow one.
 TICK_COLUMNS = ["round", "tick", "phase", "steamid", "team", "x", "y", "is_alive"]
 
 
@@ -41,7 +41,14 @@ def resolve_steamid(players_df: pd.DataFrame, player_name: str) -> int:
 
 def load_track(demo_dir: Path, steamid: int, round_number: int, include_freeze: bool):
     """Return the player's alive ticks for one round, ordered by tick."""
-    ticks = pd.read_csv(demo_dir / "ticks.csv.gz", usecols=TICK_COLUMNS)
+    # A player standing in spawn during freeze adds a dense blob of identical
+    # points that skews the time colormap, so drop it unless asked for.
+    phase = ["freeze", "live"] if include_freeze else "live"
+
+    # alive_only stays off here: we need the dead rows to tell whether the
+    # player died this round, and drop them immediately after.
+    ticks = demo_data.load_ticks(demo_dir, alive_only=False, phase=phase,
+                                 columns=TICK_COLUMNS)
 
     track = ticks[
         (ticks["steamid"] == steamid) & (ticks["round"] == round_number)
@@ -53,11 +60,6 @@ def load_track(demo_dir: Path, steamid: int, round_number: int, include_freeze: 
             f"no ticks for steamid {steamid} in round {round_number}. "
             f"rounds available for this player: {rounds_present}"
         )
-
-    # A player standing in spawn during freeze adds a dense blob of identical
-    # points that skews the time colormap, so drop it unless asked for.
-    if not include_freeze:
-        track = track[track["phase"] != "freeze"]
 
     died = (track["is_alive"] == 0).any()
     return track[track["is_alive"] == 1], died
@@ -154,10 +156,10 @@ def main():
                         help="seconds of trail behind the head in the gif (default: 6)")
     args = parser.parse_args()
 
-    manifest = json.loads((args.demo_dir / "manifest.json").read_text())
+    manifest = demo_data.read_manifest(args.demo_dir)
     map_name, tick_rate = manifest["map"], manifest["tick_rate"]
 
-    players_df = pd.read_csv(args.demo_dir / "players.csv")
+    players_df = demo_data.load_players(args.demo_dir)
     steamid = resolve_steamid(players_df, args.player)
     print(f"{args.player}: {steamid} on {map_name} @ {tick_rate} tick")
 
