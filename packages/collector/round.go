@@ -17,6 +17,13 @@ import (
 type Round struct {
 	Meta  RoundMeta
 	Ticks []PlayerTick
+	// Kills is every death in this round, in event order. Small next to Ticks
+	// (tens of rows against tens of thousands), so it rides along on the same
+	// flush rather than needing its own path through the Sink.
+	Kills []Kill
+	// Utility is every grenade effect deployed in this round. Same reasoning:
+	// tens of rows, so it travels with the round.
+	Utility []Utility
 }
 
 // RoundMeta is one round's metadata: its boundary ticks, outcome, and the

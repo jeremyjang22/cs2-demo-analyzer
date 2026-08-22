@@ -6,6 +6,8 @@
 //	<dir>/players.csv          one row per steamid, with their last-seen name
 //	<dir>/rounds.csv           one row per round
 //	<dir>/round_players.csv    one row per (round, player)
+//	<dir>/kills.csv            one row per death
+//	<dir>/utility.csv          one row per grenade effect
 //	<dir>/ticks.csv.gz         one row per (round, tick, player)
 package csvsink
 
@@ -25,7 +27,12 @@ import (
 // schemaVersion follows the rule in the design doc: appending a trailing column
 // bumps the minor part and stays readable by header-aware consumers; removing
 // or reordering columns bumps the major part.
-const schemaVersion = "1.0"
+// 1.1 added kills.csv and kill_rows; 1.2 added utility.csv and utility_rows;
+// 1.3 added the utility radius column and split the molotov kind into
+// molotov/incendiary. All additive at the file level - a header-aware consumer
+// keeps working - but note 1.3 changes a VALUE, not just a column: anything
+// filtering kind == 'molotov' now misses roughly 60% of fire.
+const schemaVersion = "1.3"
 
 // Meta is the run-level information the manifest records.
 type Meta struct {
@@ -49,6 +56,8 @@ type manifest struct {
 	TickRateSource string              `json:"tick_rate_source"`
 	Rounds         int                 `json:"rounds"`
 	TickRows       int64               `json:"tick_rows"`
+	KillRows       int64               `json:"kill_rows"`
+	UtilityRows    int64               `json:"utility_rows"`
 	Complete       bool                `json:"complete"`
 	VelocitySource string              `json:"velocity_source"`
 	Columns        map[string][]string `json:"columns"`
@@ -67,11 +76,17 @@ type Sink struct {
 	rounds       *csv.Writer
 	rpFile       *os.File
 	roundPlayers *csv.Writer
+	killsFile    *os.File
+	kills        *csv.Writer
+	utilFile     *os.File
+	utility      *csv.Writer
 
 	buf []string // reused across every tick row to avoid millions of allocations
 
 	nRounds  int
 	nTicks   int64
+	nKills   int64
+	nUtility int64
 	complete bool
 	closed   bool // guards Close() against double-closing its files on a second call
 }
@@ -125,6 +140,22 @@ func New(dir string, meta Meta) (*Sink, error) {
 		return nil, fmt.Errorf("write round_players header: %w", err)
 	}
 
+	if s.killsFile, err = os.Create(filepath.Join(dir, "kills.csv")); err != nil {
+		return nil, fmt.Errorf("create kills.csv: %w", err)
+	}
+	s.kills = csv.NewWriter(s.killsFile)
+	if err := s.kills.Write(collector.KillColumns()); err != nil {
+		return nil, fmt.Errorf("write kills header: %w", err)
+	}
+
+	if s.utilFile, err = os.Create(filepath.Join(dir, "utility.csv")); err != nil {
+		return nil, fmt.Errorf("create utility.csv: %w", err)
+	}
+	s.utility = csv.NewWriter(s.utilFile)
+	if err := s.utility.Write(collector.UtilityColumns()); err != nil {
+		return nil, fmt.Errorf("write utility header: %w", err)
+	}
+
 	ok = true
 	return s, nil
 }
@@ -144,6 +175,12 @@ func (s *Sink) closeAll() {
 	}
 	if s.rpFile != nil {
 		s.rpFile.Close()
+	}
+	if s.killsFile != nil {
+		s.killsFile.Close()
+	}
+	if s.utilFile != nil {
+		s.utilFile.Close()
 	}
 }
 
@@ -181,6 +218,20 @@ func (s *Sink) Round(r *collector.Round) error {
 		}
 	}
 
+	for i := range r.Kills {
+		s.buf = r.Kills[i].AppendRow(s.buf[:0])
+		if err := s.kills.Write(s.buf); err != nil {
+			return fmt.Errorf("write kill r%d: %w", m.Number, err)
+		}
+	}
+
+	for i := range r.Utility {
+		s.buf = r.Utility[i].AppendRow(s.buf[:0])
+		if err := s.utility.Write(s.buf); err != nil {
+			return fmt.Errorf("write utility r%d: %w", m.Number, err)
+		}
+	}
+
 	for i := range r.Ticks {
 		s.buf = r.Ticks[i].AppendRow(s.buf[:0])
 		if err := s.ticks.Write(s.buf); err != nil {
@@ -190,6 +241,8 @@ func (s *Sink) Round(r *collector.Round) error {
 
 	s.nRounds++
 	s.nTicks += int64(len(r.Ticks))
+	s.nKills += int64(len(r.Kills))
+	s.nUtility += int64(len(r.Utility))
 	if !m.Complete {
 		s.complete = false
 	}
@@ -233,6 +286,14 @@ func (s *Sink) Close() error {
 	record("flush round_players", s.roundPlayers.Error())
 	record("close round_players file", s.rpFile.Close())
 
+	s.kills.Flush()
+	record("flush kills", s.kills.Error())
+	record("close kills file", s.killsFile.Close())
+
+	s.utility.Flush()
+	record("flush utility", s.utility.Error())
+	record("close utility file", s.utilFile.Close())
+
 	if first != nil {
 		return first
 	}
@@ -258,12 +319,16 @@ func (s *Sink) writeManifest() error {
 		TickRateSource: tickRateSource,
 		Rounds:         s.nRounds,
 		TickRows:       s.nTicks,
+		KillRows:       s.nKills,
+		UtilityRows:    s.nUtility,
 		Complete:       s.complete,
 		VelocitySource: "position_diff",
 		Columns: map[string][]string{
 			"ticks":         collector.TickColumns(),
 			"rounds":        collector.RoundColumns(),
 			"round_players": collector.RoundPlayerColumns(),
+			"kills":         collector.KillColumns(),
+			"utility":       collector.UtilityColumns(),
 		},
 	}
 

@@ -470,6 +470,12 @@ func TestPlayersSortedBySteamID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	// New opens the round/tick/kill files immediately. Without this, they stay
+	// open and t.TempDir's cleanup fails on Windows, which cannot unlink a file
+	// that is still held. (On Linux the unlink succeeds and the leak is
+	// invisible, which is why this went unnoticed.)
+	defer s.Close()
+
 	names := map[uint64]string{
 		300: "charlie",
 		100: "alice",

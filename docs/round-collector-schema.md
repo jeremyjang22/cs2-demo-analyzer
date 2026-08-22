@@ -142,6 +142,38 @@ drops tick rows.
 `survived = 1` with a death later in the tick stream is correct, not a bug: the
 player was alive at `RoundEnd` and died during `postround`.
 
+## kills.csv
+
+One row per death, at the tick the kill fired. Small enough to stay uncompressed
+— a few hundred rows for a full match.
+
+| Column | Meaning |
+|---|---|
+| `phase` | `live`, or `freeze` / `postround` for deaths outside contested play |
+| `killer_steamid` | `0` for world damage — falling, the bomb, or a disconnect |
+| `killer_team`, `victim_team` | both sides, so team kills and trades need no join |
+| `assister_steamid` | `0` when unassisted; `assisted_flash` distinguishes a flash assist from damage |
+| `weapon` | `World` and `C4` appear here alongside real weapons |
+| `penetrated` | objects the bullet passed through — a wallbang is `> 0` |
+| `distance` | Hammer units, straight-line between the two players |
+
+**Filter `phase = 'live'` for anything describing the round being contested.**
+The other two are real but rarely what you want: freeze-phase kills are `World`
+deaths (disconnects and suicides), and postround kills are bomb detonations
+after the win condition was already met.
+
+**`(round, victim_steamid)` is nearly, but not quite, unique.** demoinfocs can
+fire a second `Kill` for an already-dead player at the exact tick `RoundEnd`
+fires — observed once in 613 live kills across the three reference demos
+(mega-OT Mirage round 11: a real AWP death at tick 69439, then a spurious repeat
+at tick 72349, which is `end_tick` exactly; the tick stream shows only one
+`is_alive` transition). The rows are written rather than filtered, since
+suppressing them would mean tracking live/dead state in the collector and
+discarding events on a guess. Count deaths from `round_players.survived`, or
+deduplicate on `(round, victim_steamid)` keeping the earliest tick — with that
+dedupe plus the `live` filter, kill counts reconcile exactly with
+`round_players` on all three reference demos.
+
 ## manifest.json
 
 Records `map`, `tick_rate`, `rounds`, `tick_rows`, `schema_version`, the full

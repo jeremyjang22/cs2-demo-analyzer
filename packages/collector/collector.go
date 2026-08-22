@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 
+	"github.com/golang/geo/r3"
 	demoinfocs "github.com/markus-wa/demoinfocs-golang/v5/pkg/demoinfocs"
 	"github.com/markus-wa/demoinfocs-golang/v5/pkg/demoinfocs/common"
 	"github.com/markus-wa/demoinfocs-golang/v5/pkg/demoinfocs/events"
@@ -39,19 +41,54 @@ type Collector struct {
 	pendingTimeoutTeam              common.Team
 	havePendingTimeout              bool
 
+	// openUtil maps a live grenade effect to its index in the open round, so
+	// the matching expiry event can fill in EndTick. Indexes into a flushed
+	// round are meaningless, so this is cleared at every roundStart.
+	openUtil map[utilKey]int
+
+	// liveInfernos are infernos whose fires may still be burning. demoinfocs
+	// only reports an inferno as expired when its ENTITY is destroyed, which
+	// CS2 does on a fixed ~20s timer long after the flames are out - measured
+	// at 1280 ticks (exactly 20.0s) for 374 of 396 infernos across the
+	// reference demos, against a real burn of roughly 7s. Polling the fire
+	// state each frame is the only way to record when it actually stopped.
+	liveInfernos map[int64]*common.Inferno
+
+	// pendingFire remembers what each player last threw, so an inferno can be
+	// labelled molotov or incendiary. The inferno entity itself cannot say:
+	// CS2 does not network which grenade produced it, and demoinfocs reports
+	// every one as EqIncendiary. The projectile does know, so the type is
+	// captured at throw time and consumed when the fire starts.
+	//
+	// Thrower team is NOT a substitute. Players pick up dropped grenades, and
+	// in the reference demos 19 of 380 infernos were thrown by the other side
+	// - 5 Ts throwing incendiaries, 14 CTs throwing molotovs.
+	pendingFire map[uint64]string
+
 	nRounds int
 	nTicks  int64
 	err     error // first sink error; aborts the parse
+}
+
+// utilKey identifies a live effect. Grenade entity IDs and inferno unique IDs
+// are separate ID spaces that can collide numerically, so the source is part
+// of the key.
+type utilKey struct {
+	inferno bool
+	id      int64
 }
 
 // New wires a Collector to a parser. Taking the demoinfocs.Parser interface
 // rather than an io.Reader keeps this constructible from a fake in tests.
 func New(p demoinfocs.Parser, sink Sink) *Collector {
 	c := &Collector{
-		parser: p,
-		sink:   sink,
-		vel:    newVelocityTracker(p.TickRate()),
-		names:  make(map[uint64]string, 16),
+		parser:       p,
+		sink:         sink,
+		vel:          newVelocityTracker(p.TickRate()),
+		names:        make(map[uint64]string, 16),
+		openUtil:     make(map[utilKey]int, 8),
+		liveInfernos: make(map[int64]*common.Inferno, 4),
+		pendingFire:  make(map[uint64]string, 8),
 	}
 	c.asm = newAssembler(c.emitRound)
 	c.register()
@@ -142,8 +179,10 @@ func (c *Collector) register() {
 			return
 		}
 		c.asm.roundStart(c.tick(), int32(c.parser.GameState().TotalRoundsPlayed()+1))
-		c.vel.reset()       // players teleport to spawn; prior positions are meaningless
-		c.tickGuard.reset() // new round: the first tick sampled in it must never be treated as a repeat
+		c.vel.reset()         // players teleport to spawn; prior positions are meaningless
+		c.tickGuard.reset()   // new round: the first tick sampled in it must never be treated as a repeat
+		clear(c.openUtil)     // indexes point into the round we just left
+		clear(c.liveInfernos) // ditto
 		c.consumePendingTimeout()
 	})
 
@@ -163,18 +202,233 @@ func (c *Collector) register() {
 		c.asm.roundEndOfficial(c.tick())
 	})
 
-	// Death leaves a gap; without forgetting, the respawn differences into a
-	// teleport-sized velocity spike.
 	c.parser.RegisterEventHandler(func(e events.Kill) {
+		// Death leaves a gap; without forgetting, the respawn differences into
+		// a teleport-sized velocity spike. This is deliberately ungated: it
+		// must happen during warmup and between rounds too, where recordKill
+		// drops the event.
 		if e.Victim != nil {
 			c.vel.forget(e.Victim.SteamID64)
 		}
+		c.recordKill(e)
 	})
+
+	// Utility. Smokes, decoys and infernos bracket an interval; HE and flash
+	// are instantaneous. FireGrenadeStart is deliberately unused: demoinfocs
+	// documents its Thrower as always nil and warns it may not fire at all on
+	// Source 2 demos, so infernos come from InfernoStart/InfernoExpired, which
+	// resolve the thrower off the owner-entity handle.
+	c.parser.RegisterEventHandler(func(e events.SmokeStart) { c.openUtility(UtilSmoke, e.GrenadeEvent) })
+	c.parser.RegisterEventHandler(func(e events.SmokeExpired) { c.closeUtility(grenadeKey(e.GrenadeEvent)) })
+	c.parser.RegisterEventHandler(func(e events.DecoyStart) { c.openUtility(UtilDecoy, e.GrenadeEvent) })
+	c.parser.RegisterEventHandler(func(e events.DecoyExpired) { c.closeUtility(grenadeKey(e.GrenadeEvent)) })
+	c.parser.RegisterEventHandler(func(e events.HeExplode) { c.instantUtility(UtilHE, e.GrenadeEvent) })
+	c.parser.RegisterEventHandler(func(e events.FlashExplode) { c.instantUtility(UtilFlash, e.GrenadeEvent) })
+	c.parser.RegisterEventHandler(func(e events.GrenadeProjectileThrow) { c.noteFireGrenade(e.Projectile) })
+	c.parser.RegisterEventHandler(func(e events.InfernoStart) { c.openInferno(e.Inferno) })
+	c.parser.RegisterEventHandler(func(e events.InfernoExpired) { c.closeInferno(e.Inferno) })
 
 	c.parser.RegisterEventHandler(func(events.FrameDone) {
 		c.pollTimeout()
+		c.pollInfernos()
 		c.sampleFrame()
 	})
+}
+
+func grenadeKey(e events.GrenadeEvent) utilKey {
+	return utilKey{id: int64(e.GrenadeEntityID)}
+}
+
+// utilityRow fills the fields every effect shares. The caller sets EndTick.
+func (c *Collector) utilityRow(kind string, pos r3.Vector, thrower *common.Player) Utility {
+	u := Utility{
+		Round:     c.asm.cur.Meta.Number,
+		StartTick: c.tick(),
+		Phase:     c.asm.phase(),
+		Kind:      kind,
+		X:         float32(pos.X),
+		Y:         float32(pos.Y),
+		Z:         float32(pos.Z),
+	}
+	if thrower != nil {
+		u.ThrowerSteamID = thrower.SteamID64
+		u.ThrowerTeam = thrower.Team
+	}
+	return u
+}
+
+// openUtility records an effect that occupies space until it expires.
+func (c *Collector) openUtility(kind string, e events.GrenadeEvent) {
+	if !c.asm.active() {
+		return
+	}
+	if idx := c.asm.appendUtility(c.utilityRow(kind, e.Position, e.Thrower)); idx >= 0 {
+		c.openUtil[grenadeKey(e)] = idx
+	}
+}
+
+// noteFireGrenade records that a player threw a molotov or an incendiary, so
+// the inferno it becomes can be labelled correctly. Keyed by thrower, holding
+// only the most recent: a player cannot have two fire grenades in flight at
+// once, so the newest throw is always the one about to ignite.
+func (c *Collector) noteFireGrenade(pr *common.GrenadeProjectile) {
+	if pr == nil || pr.WeaponInstance == nil || pr.Thrower == nil {
+		return
+	}
+	switch pr.WeaponInstance.Type {
+	case common.EqMolotov:
+		c.pendingFire[pr.Thrower.SteamID64] = UtilMolotov
+	case common.EqIncendiary:
+		c.pendingFire[pr.Thrower.SteamID64] = UtilIncendiary
+	}
+}
+
+func (c *Collector) openInferno(inf *common.Inferno) {
+	if !c.asm.active() || inf == nil {
+		return
+	}
+	// Entity origin rather than the centroid of Fires(): the individual fires
+	// spread outward from it over the grenade's life, so the origin is the
+	// stable point and the one a viewer wants to draw.
+	//
+	// Falls back to molotov when the throw was never seen - a grenade already
+	// in flight when the demo starts recording. Rare, and preferable to
+	// inventing a third value that consumers would have to handle.
+	kind := UtilMolotov
+	if thrower := inf.Thrower(); thrower != nil {
+		if seen, ok := c.pendingFire[thrower.SteamID64]; ok {
+			kind = seen
+			delete(c.pendingFire, thrower.SteamID64)
+		}
+	}
+	row := c.utilityRow(kind, inf.Entity.Position(), inf.Thrower())
+	if idx := c.asm.appendUtility(row); idx >= 0 {
+		c.openUtil[utilKey{inferno: true, id: inf.UniqueID()}] = idx
+		c.liveInfernos[inf.UniqueID()] = inf
+	}
+}
+
+// pollInfernos closes any inferno whose fires have all gone out, so EndTick
+// records the burn rather than the entity's lifetime. Reading Fires() touches
+// entity properties, so a destroyed entity is skipped and left to
+// closeInferno; the map is small (rarely more than three at once).
+func (c *Collector) pollInfernos() {
+	if len(c.liveInfernos) == 0 {
+		return
+	}
+	for id, inf := range c.liveInfernos {
+		if inf.Entity == nil {
+			delete(c.liveInfernos, id)
+			continue
+		}
+		key := utilKey{inferno: true, id: id}
+		fires := inf.Fires()
+
+		// Measure against every fire, lit or spent: the ground a molotov
+		// covered stays covered for the purpose of drawing its footprint.
+		if idx, ok := c.openUtil[key]; ok {
+			if row := c.utilityAt(idx); row != nil {
+				var peak float64
+				for _, f := range fires.List() {
+					dx := f.X - float64(row.X)
+					dy := f.Y - float64(row.Y)
+					if d := math.Hypot(dx, dy); d > peak {
+						peak = d
+					}
+				}
+				c.asm.growUtility(idx, float32(peak))
+			}
+		}
+
+		if len(fires.Active().List()) > 0 {
+			continue
+		}
+		delete(c.liveInfernos, id)
+		c.closeUtility(key)
+	}
+}
+
+// instantUtility records an effect with no duration. EndTick is set equal to
+// StartTick so it is distinguishable from a zero meaning "never expired".
+func (c *Collector) instantUtility(kind string, e events.GrenadeEvent) {
+	if !c.asm.active() {
+		return
+	}
+	u := c.utilityRow(kind, e.Position, e.Thrower)
+	u.EndTick = u.StartTick
+	c.asm.appendUtility(u)
+}
+
+// utilityAt exposes a row on the open round so pollInfernos can read the
+// origin it recorded at ignition.
+func (c *Collector) utilityAt(index int) *Utility {
+	if c.asm.cur == nil || index < 0 || index >= len(c.asm.cur.Utility) {
+		return nil
+	}
+	return &c.asm.cur.Utility[index]
+}
+
+// closeInferno is the fallback for an inferno whose entity was destroyed
+// before pollInfernos saw its fires stop - and the only path for one that was
+// still burning when the demo cut off. closeUtility is a no-op if the poll
+// already closed it.
+func (c *Collector) closeInferno(inf *common.Inferno) {
+	if inf == nil {
+		return
+	}
+	delete(c.liveInfernos, inf.UniqueID())
+	c.closeUtility(utilKey{inferno: true, id: inf.UniqueID()})
+}
+
+// closeUtility stamps the expiry tick on a still-open effect. An unknown key
+// means the effect started in a previous round or during warmup, so there is
+// nothing to close.
+func (c *Collector) closeUtility(key utilKey) {
+	idx, ok := c.openUtil[key]
+	if !ok {
+		return
+	}
+	delete(c.openUtil, key)
+	c.asm.closeUtility(idx, c.tick())
+}
+
+// recordKill translates a demoinfocs Kill into a Kill row on the open round.
+//
+// Killer and Assister are optional: the killer is nil for world damage (fall,
+// bomb) and, per demoinfocs, for demos corrupt enough to report an unconnected
+// player. Those become steamid 0. A nil Victim is different in kind - the row
+// would join to nothing and describe no one - so the event is dropped instead.
+func (c *Collector) recordKill(e events.Kill) {
+	if !c.asm.active() || e.Victim == nil {
+		return
+	}
+
+	k := Kill{
+		Round:         c.asm.cur.Meta.Number,
+		Tick:          c.tick(),
+		Phase:         c.asm.phase(),
+		VictimSteamID: e.Victim.SteamID64,
+		VictimTeam:    e.Victim.Team,
+		AssistedFlash: e.AssistedFlash,
+		Headshot:      e.IsHeadshot,
+		Penetrated:    int16(e.PenetratedObjects),
+		NoScope:       e.NoScope,
+		ThroughSmoke:  e.ThroughSmoke,
+		AttackerBlind: e.AttackerBlind,
+		Distance:      e.Distance,
+	}
+	if e.Killer != nil {
+		k.KillerSteamID = e.Killer.SteamID64
+		k.KillerTeam = e.Killer.Team
+	}
+	if e.Assister != nil {
+		k.AssisterSteamID = e.Assister.SteamID64
+	}
+	if e.Weapon != nil {
+		k.Weapon = e.Weapon.String()
+	}
+
+	c.asm.appendKill(k)
 }
 
 func (c *Collector) sampleFrame() {

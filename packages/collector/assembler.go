@@ -120,6 +120,48 @@ func (a *assembler) appendTick(t PlayerTick) {
 	a.cur.Ticks = append(a.cur.Ticks, t)
 }
 
+// appendUtility records a grenade effect against the open round and returns
+// its index, so a later expiry event can fill in EndTick. Returns -1 when no
+// round is open, matching appendTick's drop behaviour.
+func (a *assembler) appendUtility(u Utility) int {
+	if a.cur == nil {
+		return -1
+	}
+	a.cur.Utility = append(a.cur.Utility, u)
+	return len(a.cur.Utility) - 1
+}
+
+// growUtility records the widest extent an effect has reached. Called
+// repeatedly while it burns, keeping the peak rather than the latest, since
+// fires go out from the edges and the last sample understates the footprint.
+func (a *assembler) growUtility(index int, radius float32) {
+	if a.cur == nil || index < 0 || index >= len(a.cur.Utility) {
+		return
+	}
+	if radius > a.cur.Utility[index].Radius {
+		a.cur.Utility[index].Radius = radius
+	}
+}
+
+// closeUtility fills in the end tick of a previously opened effect. Indexes
+// from a flushed round are stale, so callers must forget them at roundStart.
+func (a *assembler) closeUtility(index int, tick int32) {
+	if a.cur == nil || index < 0 || index >= len(a.cur.Utility) {
+		return
+	}
+	a.cur.Utility[index].EndTick = tick
+}
+
+// appendKill records a death against the open round. Kills fired with no round
+// open - warmup, or between roundEndOfficial and the next roundStart - are
+// dropped, matching appendTick.
+func (a *assembler) appendKill(k Kill) {
+	if a.cur == nil {
+		return
+	}
+	a.cur.Kills = append(a.cur.Kills, k)
+}
+
 // backfillRoster ensures every steamid present in r.Ticks has a matching
 // PlayerRound in r.Meta.Players. snapshotEconomy runs once, at
 // RoundFreezetimeEnd; a player who connects after that (already mid-round)
