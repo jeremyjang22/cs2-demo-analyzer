@@ -17,6 +17,9 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from PIL import Image
 
+# Width the "scale" value in an overview .txt is calibrated against.
+REFERENCE_WIDTH = 1024
+
 
 class RadarMap:
     """A map's radar image plus the world -> image transform for it."""
@@ -61,6 +64,14 @@ class RadarMap:
 
         self.image = self.images["default"]
         self.width, self.height = self.image.size
+
+        # Valve's scale is per-pixel of a 1024-wide overview, and the .txt never
+        # states the size it assumes. A higher-resolution export of the same
+        # radar keeps the same scale, so taking it literally would stretch the
+        # world extent by the resolution ratio and silently draw every position
+        # at the wrong place. Normalise instead of trusting the file.
+        if self.width != REFERENCE_WIDTH:
+            self.scale *= REFERENCE_WIDTH / self.width
 
     @property
     def is_multi_level(self) -> bool:
