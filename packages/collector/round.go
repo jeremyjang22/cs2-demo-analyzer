@@ -24,6 +24,21 @@ type Round struct {
 	// Utility is every grenade effect deployed in this round. Same reasoning:
 	// tens of rows, so it travels with the round.
 	Utility []Utility
+	// Shots is every weapon-fire event. Larger than Kills and Utility -
+	// hundreds of rows in a heavy round rather than tens - but still three
+	// orders of magnitude under Ticks, so it rides the same flush.
+	Shots []Shot
+	// Damage is every PlayerHurt. Roughly five to ten rows per kill.
+	Damage []Damage
+	// Bomb is the C4's state changes: picked up, dropped, moved while loose,
+	// planted, defused, exploded. A handful of rows per round.
+	Bomb []BombSample
+	// Kits is defuse kits hitting the ground and being picked back up.
+	// Derived rather than observed - see KitEvent.
+	Kits []KitEvent
+	// Trajectories is the flight path of every grenade thrown this round, as
+	// points grouped by projectile. The largest of these side tables.
+	Trajectories []TrajectoryPoint
 }
 
 // RoundMeta is one round's metadata: its boundary ticks, outcome, and the

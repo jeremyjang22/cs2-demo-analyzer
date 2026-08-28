@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildTimeline, chapterAt, clampTime, scoreBefore, secWithin, seekToRound, stepRound,
+  buildTimeline, chapterAt, chapterLength, clampTime, isPostround, scoreBefore,
+  secWithin, seekToRound, stepRound,
 } from "./timeline";
 import type { Payload, RoundMeta } from "./types";
 
@@ -104,5 +105,58 @@ describe("clampTime", () => {
   it("holds the match bounds", () => {
     expect(clampTime(tl, -5)).toBe(0);
     expect(clampTime(tl, 9999)).toBe(250);
+  });
+});
+
+// CS2 gives survivors seven seconds after the win condition. The viewer plays
+// through them, so every one of these has to account for the tail.
+describe("the postround tail", () => {
+  const withPost = {
+    rounds: {
+      "0:1": { ...round(1, 0, 40, 1, 0), post: 7 },
+      "0:2": { ...round(2, 100, 30, 1, 1), post: 7 },
+    },
+  } as unknown as Payload;
+  const post = buildTimeline(withPost);
+
+  it("extends a chapter past the moment it was decided", () => {
+    const [first] = post.chapters;
+    expect(first.decided).toBe(40);
+    expect(first.end).toBe(47);
+  });
+
+  it("counts the last round's tail in the match duration", () => {
+    expect(post.duration).toBe(137);
+  });
+
+  // Without this the clock froze at the win condition and the whole save
+  // window played as one held frame.
+  it("keeps the round clock running through the tail", () => {
+    expect(secWithin(post.chapters[0], 44)).toBe(44);
+    expect(secWithin(post.chapters[0], 47)).toBe(47);
+    expect(secWithin(post.chapters[0], 9999)).toBe(47);
+  });
+
+  it("still attributes a time inside the tail to that round", () => {
+    expect(chapterAt(post, 45)!.meta.n).toBe(1);
+    // ...and the gap after it still belongs to the round about to begin.
+    expect(chapterAt(post, 60)!.meta.n).toBe(2);
+  });
+
+  it("knows which side of the win condition a time is on", () => {
+    expect(isPostround(post.chapters[0], 39.9)).toBe(false);
+    expect(isPostround(post.chapters[0], 40)).toBe(false);
+    expect(isPostround(post.chapters[0], 40.1)).toBe(true);
+  });
+
+  // A payload written before the tail was exported has no `post` at all, and
+  // must behave exactly as it did then rather than producing NaN ends.
+  it("treats a missing tail as no tail", () => {
+    expect(chapterLength(round(1, 0, 40, 1, 0))).toBe(40);
+    const [first] = tl.chapters;
+    expect(first.end).toBe(40);
+    expect(first.decided).toBe(40);
+    expect(isPostround(first, 41)).toBe(true);
+    expect(secWithin(first, 9999)).toBe(40);
   });
 });

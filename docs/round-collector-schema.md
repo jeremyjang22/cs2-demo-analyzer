@@ -12,6 +12,13 @@ manifest.json        run metadata: map, tick rate, counts, column lists
 players.csv          steamid -> last-seen name
 rounds.csv           one row per round
 round_players.csv    one row per (round, player)
+kills.csv            one row per death
+utility.csv          one row per grenade effect
+shots.csv            one row per weapon fire
+damage.csv           one row per damage event
+bomb.csv             one row per C4 state change
+kits.csv             one row per defuse kit dropped or taken  (derived)
+trajectories.csv     one row per point on a thrown grenade's flight path
 ticks.csv.gz         one row per (round, tick, player)   <- the big one
 ```
 
@@ -89,6 +96,32 @@ key.
 | `flash_remaining` | float | seconds of blindness left |
 | `active_weapon` | string | e.g. `AK-47`; empty when holding nothing |
 | `place` | string | named map area, e.g. `Palace`; empty when unknown |
+| `has_helmet`, `has_kit`, `has_bomb` | 0/1 | helmet, defuse kit, carrying the C4 |
+| `primary` | string | rifle / SMG / shotgun slot, e.g. `AK-47`; empty when they have none |
+| `secondary` | string | pistol slot |
+| `nades` | string | one sorted character per grenade carried — see below |
+| `money` | int | cash in hand, live — moves on a buy, a kill reward, the payout |
+
+### the loadout columns
+
+`primary` and `secondary` are slots, not "what they are holding" — that is
+`active_weapon`. A player mid-plant holds the C4 and still reports their AK in
+`primary`. Both are empty when the slot is genuinely empty, which is a real
+state on an eco or after dropping a gun, not a parse failure.
+
+`nades` packs the grenade belt into one field, one character each, sorted:
+
+```
+h  HE        f  flash      s  smoke
+m  molotov   i  incendiary d  decoy
+```
+
+So `fhis` is a full utility buy and `ff` is two flashes and nothing else.
+Sorting is not cosmetic: `Weapons()` iterates a Go map, and without it the
+same demo would produce different bytes on every parse.
+
+Knives are deliberately absent. Everyone has one always, so the column would
+be constant — the same reason `max_speed` was removed in 1.1.
 
 ### buttons bitmask
 
@@ -103,6 +136,191 @@ key.
 A counterstrafe is `move left` released and `move right` tapped (or the reverse)
 within a few ticks, with `speed` collapsing toward zero. Both bits plus `speed`
 plus `shots_fired` are on the same row.
+
+## shots.csv
+
+One row per trigger pull. ~3,000 rows for a 19-round demo.
+
+| Column | Meaning |
+|---|---|
+| `steamid`, `team` | who fired |
+| `weapon` | `AK-47`, but also `Knife`, `Smoke Grenade`, … — see below |
+| `x`, `y`, `z` | the shooter's feet, same convention as `ticks.csv.gz` |
+| `yaw`, `pitch` | view angles at the fire tick. Yaw wraps ±180 |
+
+**One row per trigger pull, not per projectile.** A shotgun blast is one row
+for nine pellets.
+
+**Knife swings and grenade throws are in here.** In the reference Anubis demo,
+303 of 3,090 rows are `Knife` and another 322 are grenades. That is deliberate
+— the table can then answer "when did they throw it" — but anything drawing
+bullet tracers has to filter on `weapon` first.
+
+**There is no endpoint column, and there cannot be one.** The demo records
+that a weapon fired and, separately, that someone took damage; it never traces
+the bullet. To terminate a tracer on its victim, join `damage.csv` on
+`(round, tick, attacker_steamid)`. Shots that hit a wall have no join partner
+and no knowable endpoint — only a direction.
+
+## damage.csv
+
+One row per `PlayerHurt`. Expect roughly four to five rows per kill: 623 rows
+against 138 kills in the reference Anubis demo.
+
+| Column | Meaning |
+|---|---|
+| `victim_steamid`, `victim_team` | who took it |
+| `attacker_steamid`, `attacker_team` | `0` for world damage — falls and the bomb |
+| `weapon` | resolved from the equipment, not from demoinfocs' `WeaponString` (which its own docs flag as wrong for the CZ and M4A1-S) |
+| `kind` | derived; see below |
+| `health_damage`, `armor_damage` | raw, **including over-damage** |
+| `health_remaining`, `armor_remaining` | the victim's state after the hit |
+| `hitgroup` | 1 head, 2 chest, 3 stomach, 4/5 arms, 6/7 legs, 8 neck, 0 generic |
+| `x`, `y`, `z` | the **victim's** position, not the attacker's |
+
+`kind` is a closed set, derived from the weapon because CS2 does not network a
+damage type:
+
+| `kind` | Source |
+|---|---|
+| `bullet` | any pistol, SMG, shotgun, rifle |
+| `he` | HE grenade |
+| `fire` | molotov or incendiary (not split here — the burn is identical; `weapon` still says which) |
+| `impact` | a thrown smoke/flash/decoy physically hitting someone. Always exactly 1 damage |
+| `bomb` | C4 detonation |
+| `fall` | world damage with no attacker |
+| `knife`, `zeus` | |
+| `other` | anything the derivation does not recognise, including world damage that is *not* a fall |
+
+**Over-damage is preserved.** A 5 HP player hit for 502 records
+`health_damage = 502`, `health_remaining = 0`. The clamped figure is
+recoverable from the pair; the raw one would not be.
+
+**`kind = 'fall'` is rare and map-dependent.** Nine rows in the reference Nuke
+demo, one in Mirage, none at all in Anubis. Its absence means nobody fell, not
+that the derivation is broken.
+
+## bomb.csv
+
+One row per C4 state change, plus a position sample per few ticks while it is
+loose. Roughly 700–2,500 rows per demo.
+
+| Column | Meaning |
+|---|---|
+| `state` | `carried` \| `dropped` \| `planted` \| `defused` \| `exploded` |
+| `carrier_steamid`, `carrier_team` | who is holding it. On a `planted` row, who planted it; on `defused`, who defused it. `0` otherwise |
+| `site` | `A`, `B`, or empty. Only ever set from the `planted` row onward |
+| `x`, `y`, `z` | where the bomb is |
+
+**Rows are emitted on change, not per tick.** A carried bomb produces exactly
+one row, at pickup — its position for the rest of that carry is the carrier's,
+which `ticks.csv.gz` already holds once per tick. To draw a carried bomb, follow
+the carrier.
+
+**A loose bomb is the exception and is sampled while it moves,** because
+nothing else records where it went. That is why `dropped` dominates the row
+counts (892 of 952 rows in the reference Anubis demo) despite only 84 actual
+drops: a thrown C4 is airborne for about a second and gets ~50 rows of arc.
+Every loose episode in all three reference demos is under 1.1 seconds — a
+`dropped` run lasting longer than that would mean the carrier was not being
+resolved, and none was observed.
+
+**A planted bomb never moves.** Its position is recorded once, from the
+planter's own position at the plant tick, and `defused` / `exploded` reuse it.
+
+## trajectories.csv
+
+Where every thrown grenade flew. The largest of the side tables — about 8,000
+rows for a 20-round demo.
+
+| Column | Meaning |
+|---|---|
+| `projectile_id` | groups the points of one throw, numbered in **throw** order. Unique within a round only |
+| `seq` | orders the points, from 0 at the thrower's hand |
+| `kind` | `smoke` \| `flash` \| `he` \| `molotov` \| `incendiary` \| `decoy` — the same vocabulary as `utility.csv`, so the two join without a translation table |
+| `thrower_steamid`, `thrower_team` | who threw it |
+| `x`, `y`, `z` | the point |
+
+Read one throw with `WHERE round = 5 AND projectile_id = 3 ORDER BY seq`.
+
+**A trajectory is where the grenade FLEW; `utility.csv` is where its effect
+ended up.** Neither substitutes for the other — a smoke that clips a doorframe
+and drops short has a revealing arc and an unremarkable landing spot.
+
+**These points are sampled by this collector, not taken from demoinfocs'
+`GrenadeProjectile.Trajectory`.** That field looks like the obvious source and
+is not one: it appends a point on exactly three occasions — the throw, each
+bounce, and the entity's destruction. Measured on the reference Nuke demo it
+gives a median of **4 points per throw**, with consecutive points up to 900
+units and 70 ticks apart, which draws as a couple of straight chords through
+walls. Sampling the projectile's position once per frame instead gives a median
+of **25 points** at a consistent 45-unit spacing. Same reasoning as
+`pollInfernos` and `pollBomb`: the library reports entity lifetime where what
+is wanted is entity motion.
+
+Points closer than 32 units to the one before are dropped. A grenade covers ten
+to fifteen units a tick in flight so the arc survives intact.
+
+**A path ends when the grenade stops moving, not when its entity dies.** Those
+are wildly different moments for a smoke, whose projectile lives as long as the
+cloud: before this was handled, a smoke thrown 0.33s into Anubis round 5
+recorded a 29.55s "flight". Sampling stops once the grenade has held still for
+24 ticks, so the last point is where it came to rest. The resulting flight
+times are the real ones — medians of 1.62s for a flashbang and 1.56s for an HE,
+which are their fuses.
+
+**A long throw keeps moving well after it lands.** That same instant smoke
+travels 2,560 units and rolls for roughly 4.7 seconds after touching down, and
+all of it is in the path. That is the grenade genuinely still moving, and it is
+usually the interesting part — it is why a smoke ends up somewhere its thrower
+did not intend.
+
+## kits.csv
+
+Defuse kits hitting the ground and being picked back up. Tens of rows per demo.
+
+| Column | Meaning |
+|---|---|
+| `event` | `dropped` \| `taken` |
+| `kit_id` | pairs a `taken` with its `dropped`. **Unique within a round only** — ids restart at 1 each round |
+| `steamid`, `team` | who dropped it, or who took it |
+| `x`, `y`, `z` | where |
+
+**This is the one derived table in the output, and it is the only place the
+collector reports something the demo never said.** CS2 does not model a dropped
+defuse kit as an entity at all: parsing the reference Nuke demo end to end
+yields 56 distinct server classes — `CAK47`, `CC4`, `CPlantedC4`,
+`CSmokeGrenade` and so on — and not one is a kit, kevlar or helmet. Those exist
+only as properties on a player pawn, so the instant a CT dies, the kit they
+carried stops being represented anywhere.
+
+What the demo does say is when the *property* changes, and these rows are
+reconstructed from that:
+
+- **`has_defuser` 1 → 0 is a drop.** Across the three reference demos all 135
+  such transitions land on the exact tick that player died — not one happened
+  to a living player — so "the kit went away" and "its owner was killed" are
+  the same event.
+- **`has_defuser` 0 → 1 is either a buy or a pickup**, and proximity decides
+  which. Every gain that had any kit already on the ground that round was
+  within 213 units of one (0, 10, 33, 46, 67, 81, 82, 86, 89, 100, 116, 151,
+  213); the other 145 gains had no kit on the ground at all and are
+  unambiguous buys. The threshold is 250 units. A gain with no kit in reach
+  produces no row, because nothing was on the ground to pick up.
+
+Three consequences of it being derived, all of which are behaviour and not
+bugs:
+
+- A kit dropped by a player who **disconnects** is missed. They stop appearing
+  in the tick stream, so there is no transition to observe.
+- A `dropped` with no matching `taken` is the **normal** case — most kits are
+  never retrieved. It means the kit was still lying there at the end of the
+  round.
+- A pickup in the same instant as a nearby buy could in principle be
+  mismatched. Not observed in the reference demos.
+
+Reference counts: 18 dropped / 2 taken (Anubis), 25 / 2 (Nuke), 92 / 8
+(Mirage). Every `taken` resolves to a `dropped` in the same round.
 
 ## rounds.csv
 
@@ -158,9 +376,21 @@ One row per death, at the tick the kill fired. Small enough to stay uncompressed
 | `distance` | Hammer units, straight-line between the two players |
 
 **Filter `phase = 'live'` for anything describing the round being contested.**
-The other two are real but rarely what you want: freeze-phase kills are `World`
-deaths (disconnects and suicides), and postround kills are bomb detonations
-after the win condition was already met.
+Freeze-phase kills are `World` deaths — disconnects and suicides — and are not
+kills in any sense the scoreboard recognises.
+
+**Postround kills are a different case and are usually worth keeping.** CS2
+gives survivors a flat seven seconds after the win condition (measured:
+`official_end_tick - end_tick` is 7.00s for every complete round across all
+three reference demos, with a handful of 8.50s), and people use them — running
+a rifle to a corner to save it, or hunting down whoever is trying to. Those
+deaths count on the in-game scoreboard, cost the victim their gun for the next
+round, and change nothing about who won.
+
+They are rare but real: 3 across 87 rounds in the reference demos — an M4A1
+kill 2.5s after a detonation, a fall 2.8s after a defuse, and a C4 killing a CT
+3.9s after the Ts were eliminated. Note that `round_players.survived` is `1`
+for all three, which is correct: they survived the round and died after it.
 
 **`(round, victim_steamid)` is nearly, but not quite, unique.** demoinfocs can
 fire a second `Kill` for an already-dead player at the exact tick `RoundEnd`
@@ -194,7 +424,22 @@ stays readable by header-aware consumers (DuckDB, pandas). Removing or
 reordering columns bumps major. Read the manifest's `columns` map rather than
 assuming positions.
 
-Known change so far: `max_speed` existed in early drafts and was removed. It was
+Changes so far:
+
+- **1.1** added `kills.csv`.
+- **1.2** added `utility.csv`.
+- **1.3** added the utility `radius` column and split `molotov` into
+  `molotov` / `incendiary`. Note that this changed a **value**, not just a
+  column: anything filtering `kind = 'molotov'` now misses roughly 60% of fire.
+- **1.4** added `shots.csv`, `damage.csv`, `bomb.csv`, and six trailing loadout
+  columns on `ticks.csv.gz`. Purely additive — every existing column keeps its
+  position and its meaning.
+- **1.5** added `kits.csv`, the first derived table in the output. Additive,
+  but read its section before treating those rows like the observed ones.
+- **1.6** added `trajectories.csv` and a trailing `money` column on
+  `ticks.csv.gz`. Additive.
+
+Known removal: `max_speed` existed in early drafts and was removed. It was
 constant 260 for every weapon — CS2 does not network a weapon-adjusted speed cap
 at all. To normalize speed by weapon, join `active_weapon` against a table you
 maintain.

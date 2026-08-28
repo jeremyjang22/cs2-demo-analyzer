@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deadAt, flagAt, idxAt, lengthSec, posAt, runs, yawAt } from "./track";
+import { deadAt, equipAt, flagAt, idxAt, lengthSec, posAt, runs, yawAt } from "./track";
 import type { RoundTrack } from "./types";
 
 const HZ = 4;
@@ -152,5 +152,71 @@ describe("runs", () => {
     const r = runs(track({ air: "01010" }), 0, 4);
     expect(r.length).toBeGreaterThan(0);
     for (const run of r) expect(run.to).toBeGreaterThan(run.from);
+  });
+});
+
+
+describe("equipAt", () => {
+  // [sampleIndex, health, armor, money, flags, primary, secondary, nades]
+  const armed = track({
+    eq: [
+      [0, 100, 100, 800, 3, "AK-47", "Glock-18", "fhs"],
+      [2, 100, 100, 800, 3, "AK-47", "Glock-18", "fh"],
+      [4, 62, 88, 1100, 1, "", "Glock-18", ""],
+    ],
+  });
+
+  it("holds a change until the next one", () => {
+    expect(equipAt(armed, 0, HZ).nades).toBe("fhs");
+    expect(equipAt(armed, 0.25, HZ).nades).toBe("fhs");
+    expect(equipAt(armed, 0.5, HZ).nades).toBe("fh");
+    expect(equipAt(armed, 0.9, HZ).nades).toBe("fh");
+    expect(equipAt(armed, 1, HZ).nades).toBe("");
+  });
+
+  it("unpacks the flag bits", () => {
+    const full = equipAt(armed, 0, HZ);
+    expect(full.helmet).toBe(true);
+    expect(full.kit).toBe(true);
+    expect(full.bomb).toBe(false);
+
+    const later = equipAt(armed, 1, HZ);
+    expect(later.helmet).toBe(true);
+    expect(later.kit).toBe(false);
+  });
+
+  it("reads an empty slot as empty rather than as missing data", () => {
+    const dropped = equipAt(armed, 1, HZ);
+    expect(dropped.primary).toBe("");
+    expect(dropped.secondary).toBe("Glock-18");
+  });
+
+  // Health and money ride in the same change list as the gear, so a hit and a
+  // kill reward both land here rather than in arrays of their own.
+  it("tracks health and money over the round", () => {
+    expect(equipAt(armed, 0, HZ).hp).toBe(100);
+    expect(equipAt(armed, 0, HZ).money).toBe(800);
+    expect(equipAt(armed, 1, HZ).hp).toBe(62);
+    expect(equipAt(armed, 1, HZ).armor).toBe(88);
+    expect(equipAt(armed, 1, HZ).money).toBe(1100);
+  });
+
+  // Past the last change the loadout simply has not changed since.
+  it("clamps past the end of the round", () => {
+    expect(equipAt(armed, 999, HZ).armor).toBe(88);
+  });
+
+  // A movement.json written before the exporter emitted equipment is still a
+  // perfectly drawable payload. A blank kit beats a crashed scoreboard.
+  it("reports an empty loadout when the track carries none", () => {
+    const bare = equipAt(track(), 1, HZ);
+    expect(bare.primary).toBe("");
+    expect(bare.armor).toBe(0);
+    expect(bare.money).toBe(0);
+    expect(bare.helmet).toBe(false);
+  });
+
+  it("survives an empty change list", () => {
+    expect(equipAt(track({ eq: [] }), 1, HZ).nades).toBe("");
   });
 });

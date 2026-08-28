@@ -162,6 +162,49 @@ func (a *assembler) appendKill(k Kill) {
 	a.cur.Kills = append(a.cur.Kills, k)
 }
 
+// appendShot records a weapon fire against the open round. Same drop rule as
+// appendTick: fires with no round open (warmup, or between rounds) are not
+// part of any round and are discarded.
+func (a *assembler) appendShot(s Shot) {
+	if a.cur == nil {
+		return
+	}
+	a.cur.Shots = append(a.cur.Shots, s)
+}
+
+// appendDamage records a PlayerHurt against the open round.
+func (a *assembler) appendDamage(d Damage) {
+	if a.cur == nil {
+		return
+	}
+	a.cur.Damage = append(a.cur.Damage, d)
+}
+
+// appendBomb records a C4 state change against the open round.
+func (a *assembler) appendBomb(s BombSample) {
+	if a.cur == nil {
+		return
+	}
+	a.cur.Bomb = append(a.cur.Bomb, s)
+}
+
+// appendKit records a defuse kit event against the open round.
+func (a *assembler) appendKit(k KitEvent) {
+	if a.cur == nil {
+		return
+	}
+	a.cur.Kits = append(a.cur.Kits, k)
+}
+
+// appendTrajectory records one grenade's whole flight path against the open
+// round, and returns the id the points were grouped under (0 when dropped).
+func (a *assembler) appendTrajectory(points []TrajectoryPoint) {
+	if a.cur == nil || len(points) == 0 {
+		return
+	}
+	a.cur.Trajectories = append(a.cur.Trajectories, points...)
+}
+
 // backfillRoster ensures every steamid present in r.Ticks has a matching
 // PlayerRound in r.Meta.Players. snapshotEconomy runs once, at
 // RoundFreezetimeEnd; a player who connects after that (already mid-round)

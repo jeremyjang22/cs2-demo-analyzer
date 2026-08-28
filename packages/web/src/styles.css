@@ -236,3 +236,84 @@ ul.feed li {
   position: absolute; top: -2px; bottom: -2px; width: 2px;
   background: #fff; pointer-events: none; box-shadow: 0 0 4px rgba(0, 0, 0, .8);
 }
+
+/* ---- health, cash and equipment, under the name in the scoreboard ---- */
+table.board td.who { flex-wrap: wrap; }
+
+.hp { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.hp-bar {
+  width: 34px; height: 4px; border-radius: 2px;
+  background: #33322e; overflow: hidden;
+}
+.hp-fill { display: block; height: 100%; background: currentColor; }
+.hp-n { font-size: 10px; font-variant-numeric: tabular-nums; min-width: 20px; text-align: right; }
+.hp.full { color: #6fbf73; }
+.hp.hurt { color: #ffc148; }
+.hp.low  { color: #ff4d3d; }
+.hp.dead { color: var(--muted); }
+
+.cash {
+  font-size: 10px; color: #7cba7f; font-variant-numeric: tabular-nums;
+  margin-left: 6px;
+}
+
+.kit {
+  flex-basis: 100%;
+  display: flex; align-items: center; gap: 5px;
+  font-size: 10px; color: var(--muted);
+  padding-left: 17px; /* clears the colour pip above it */
+  line-height: 1.4;
+}
+/* Icons sit on the text baseline rather than hanging below it. */
+.kit svg, .hp svg { display: block; flex: none; }
+.kit .armor { display: flex; align-items: center; gap: 2px; color: #4a4945; }
+.kit .armor.on { color: #7fb4e8; }
+.kit .armor-n { font-variant-numeric: tabular-nums; }
+.kit .tag-kit { color: #8fd0ff; display: flex; }
+.kit .tag-c4 { color: #f0b429; display: flex; }
+.kit .guns {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--ink-2); overflow: hidden; min-width: 0;
+}
+.kit .gun { display: flex; align-items: center; gap: 3px; white-space: nowrap; }
+.kit .gun.sidearm { color: var(--muted); }
+.kit .nades { margin-left: auto; display: flex; gap: 3px; }
+.kit .nade { display: flex; }
+
+/* ---- bomb status line ---- */
+.bomb-status {
+  display: flex; align-items: center; gap: 6px; font-size: 12px;
+  padding: 4px 6px; background: #201f1d; border-radius: 5px;
+  border-left: 2px solid var(--muted);
+}
+.bomb-status.carried { border-left-color: #f0b429; }
+.bomb-status.dropped { border-left-color: #ffd166; }
+.bomb-status.planted { border-left-color: #ff3b30; }
+.bomb-status.defused { border-left-color: #4cc94c; }
+.bomb-chip {
+  font-size: 9px; font-weight: 700; letter-spacing: .04em;
+  padding: 1px 4px; border-radius: 3px; background: #3a3a36; color: var(--ink);
+}
+.bomb-what { color: var(--muted); }
+.bomb-who { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bomb-site { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* A death after the round was already decided — a failed save. Dimmed,
+   because it did not change the result, but marked, because it cost a gun. */
+ul.feed li.post { background: #1b1a18; opacity: .8; }
+.tag.post { background: #3a3320; color: #e8c37a; }
+
+/* The postround tail inside a timeline chapter. Hatched rather than tinted:
+   it is time you can scrub through, but nobody is contesting the round in it. */
+.tl-post {
+  position: absolute; top: 0; bottom: 0; right: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    -45deg, rgba(0, 0, 0, .38) 0 3px, rgba(0, 0, 0, 0) 3px 6px);
+  border-left: 1px solid rgba(255, 255, 255, .35);
+}
+.tpost {
+  color: #e8c37a; font-size: 11px;
+  padding: 1px 5px; border-radius: 4px; background: #3a3320;
+  white-space: nowrap;
+}

@@ -66,6 +66,12 @@ func distinctiveTick() PlayerTick {
 		FlashRemaining: 3.75,
 		ActiveWeapon:   "ak47",
 		Place:          "Palace",
+		Money:          3450,
+
+		Loadout: Loadout{
+			HasHelmet: true, HasKit: false, HasBomb: true,
+			Primary: "AK-47", Secondary: "Glock-18", Nades: "fhs",
+		},
 	}
 }
 
@@ -119,6 +125,13 @@ func TestAppendRowValuesLandInClaimedColumns(t *testing.T) {
 		"flash_remaining":  "3.75",
 		"active_weapon":    "ak47",
 		"place":            "Palace",
+		"has_helmet":       "1",
+		"has_kit":          "0",
+		"has_bomb":         "1",
+		"primary":          "AK-47",
+		"secondary":        "Glock-18",
+		"nades":            "fhs",
+		"money":            "3450",
 	}
 	if len(want) != len(header) {
 		t.Fatalf("test covers %d columns, TickColumns has %d - every column must be checked", len(want), len(header))

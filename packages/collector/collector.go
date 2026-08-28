@@ -65,6 +65,21 @@ type Collector struct {
 	// - 5 Ts throwing incendiaries, 14 CTs throwing molotovs.
 	pendingFire map[uint64]string
 
+	// bomb watches the C4 across every frame and decides when its state is
+	// worth a row. Reset at every roundStart, like openUtil.
+	bomb bombTracker
+
+	// kits reconstructs dropped defuse kits from per-player state, since CS2
+	// does not network one as an entity at all. See KitEvent.
+	kits *kitTracker
+
+	// liveProjectiles are grenades currently in the air, sampled once per
+	// frame by pollProjectiles. Keyed by demoinfocs' projectile unique id.
+	liveProjectiles map[int64]*flightPath
+	// nextProjectile numbers grenade flight paths within a round, so the
+	// points of one throw can be grouped. Reset at every roundStart.
+	nextProjectile int32
+
 	nRounds int
 	nTicks  int64
 	err     error // first sink error; aborts the parse
@@ -82,13 +97,15 @@ type utilKey struct {
 // rather than an io.Reader keeps this constructible from a fake in tests.
 func New(p demoinfocs.Parser, sink Sink) *Collector {
 	c := &Collector{
-		parser:       p,
-		sink:         sink,
-		vel:          newVelocityTracker(p.TickRate()),
-		names:        make(map[uint64]string, 16),
-		openUtil:     make(map[utilKey]int, 8),
-		liveInfernos: make(map[int64]*common.Inferno, 4),
-		pendingFire:  make(map[uint64]string, 8),
+		parser:          p,
+		sink:            sink,
+		vel:             newVelocityTracker(p.TickRate()),
+		names:           make(map[uint64]string, 16),
+		openUtil:        make(map[utilKey]int, 8),
+		liveInfernos:    make(map[int64]*common.Inferno, 4),
+		pendingFire:     make(map[uint64]string, 8),
+		kits:            newKitTracker(),
+		liveProjectiles: make(map[int64]*flightPath, 4),
 	}
 	c.asm = newAssembler(c.emitRound)
 	c.register()
@@ -179,10 +196,14 @@ func (c *Collector) register() {
 			return
 		}
 		c.asm.roundStart(c.tick(), int32(c.parser.GameState().TotalRoundsPlayed()+1))
-		c.vel.reset()         // players teleport to spawn; prior positions are meaningless
-		c.tickGuard.reset()   // new round: the first tick sampled in it must never be treated as a repeat
-		clear(c.openUtil)     // indexes point into the round we just left
-		clear(c.liveInfernos) // ditto
+		c.vel.reset()            // players teleport to spawn; prior positions are meaningless
+		c.tickGuard.reset()      // new round: the first tick sampled in it must never be treated as a repeat
+		clear(c.openUtil)        // indexes point into the round we just left
+		clear(c.liveInfernos)    // ditto
+		c.bomb.reset()           // last round's plant says nothing about this one
+		c.kits.reset()           // kits do not survive a round
+		c.nextProjectile = 0     // projectile ids are per-round, like kit ids
+		clear(c.liveProjectiles) // a grenade in the air at a round boundary is not this round's
 		c.consumePendingTimeout()
 	})
 
@@ -224,13 +245,29 @@ func (c *Collector) register() {
 	c.parser.RegisterEventHandler(func(e events.DecoyExpired) { c.closeUtility(grenadeKey(e.GrenadeEvent)) })
 	c.parser.RegisterEventHandler(func(e events.HeExplode) { c.instantUtility(UtilHE, e.GrenadeEvent) })
 	c.parser.RegisterEventHandler(func(e events.FlashExplode) { c.instantUtility(UtilFlash, e.GrenadeEvent) })
-	c.parser.RegisterEventHandler(func(e events.GrenadeProjectileThrow) { c.noteFireGrenade(e.Projectile) })
+	c.parser.RegisterEventHandler(func(e events.GrenadeProjectileThrow) {
+		c.noteFireGrenade(e.Projectile)
+		c.openTrajectory(e.Projectile)
+	})
+	c.parser.RegisterEventHandler(func(e events.GrenadeProjectileDestroy) { c.closeTrajectory(e.Projectile) })
 	c.parser.RegisterEventHandler(func(e events.InfernoStart) { c.openInferno(e.Inferno) })
 	c.parser.RegisterEventHandler(func(e events.InfernoExpired) { c.closeInferno(e.Inferno) })
+
+	c.parser.RegisterEventHandler(func(e events.WeaponFire) { c.recordShot(e) })
+	c.parser.RegisterEventHandler(func(e events.PlayerHurt) { c.recordDamage(e) })
+
+	// The bomb's position and carrier are entity state, read by pollBomb once
+	// per frame. Only the three transitions that change what "nobody is
+	// carrying it" MEANS need events of their own.
+	c.parser.RegisterEventHandler(func(e events.BombPlanted) { c.onBombPlanted(e) })
+	c.parser.RegisterEventHandler(func(e events.BombDefused) { c.onBombFinished(BombDefused, e.Player) })
+	c.parser.RegisterEventHandler(func(e events.BombExplode) { c.onBombFinished(BombExploded, e.Player) })
 
 	c.parser.RegisterEventHandler(func(events.FrameDone) {
 		c.pollTimeout()
 		c.pollInfernos()
+		c.pollBomb()
+		c.pollProjectiles()
 		c.sampleFrame()
 	})
 }
@@ -431,6 +468,234 @@ func (c *Collector) recordKill(e events.Kill) {
 	c.asm.appendKill(k)
 }
 
+// recordShot translates a WeaponFire into a Shot row. A nil shooter means
+// demoinfocs could not attribute the fire (a partially corrupt demo, per its
+// own docs on the field) - unlike an unattributed grenade, an unattributed
+// tracer has no origin to draw from, so the event is dropped rather than
+// written as a shot from the world origin.
+func (c *Collector) recordShot(e events.WeaponFire) {
+	if !c.asm.active() || e.Shooter == nil {
+		return
+	}
+	pos := e.Shooter.Position()
+	s := Shot{
+		Round:   c.asm.cur.Meta.Number,
+		Tick:    c.tick(),
+		Phase:   c.asm.phase(),
+		SteamID: e.Shooter.SteamID64,
+		Team:    e.Shooter.Team,
+		X:       float32(pos.X),
+		Y:       float32(pos.Y),
+		Z:       float32(pos.Z),
+		Yaw:     e.Shooter.ViewDirectionX(),
+		Pitch:   e.Shooter.ViewDirectionY(),
+	}
+	if e.Weapon != nil {
+		s.Weapon = e.Weapon.String()
+	}
+	c.asm.appendShot(s)
+}
+
+// recordDamage translates a PlayerHurt into a Damage row.
+//
+// A nil Player is dropped for the same reason recordKill drops a nil victim:
+// the row would describe no one and join to nothing. A nil Attacker is kept -
+// that is world damage, and a fall is exactly the kind of damage worth
+// showing.
+func (c *Collector) recordDamage(e events.PlayerHurt) {
+	if !c.asm.active() || e.Player == nil {
+		return
+	}
+	pos := e.Player.Position()
+	d := Damage{
+		Round:           c.asm.cur.Meta.Number,
+		Tick:            c.tick(),
+		Phase:           c.asm.phase(),
+		VictimSteamID:   e.Player.SteamID64,
+		VictimTeam:      e.Player.Team,
+		Weapon:          weaponName(e),
+		Kind:            damageKind(e.Weapon, e.Attacker, e.Player),
+		HealthDamage:    int16(e.HealthDamage),
+		ArmorDamage:     int16(e.ArmorDamage),
+		HealthRemaining: int16(e.Health),
+		ArmorRemaining:  int16(e.Armor),
+		HitGroup:        uint8(e.HitGroup),
+		X:               float32(pos.X),
+		Y:               float32(pos.Y),
+		Z:               float32(pos.Z),
+	}
+	if e.Attacker != nil {
+		d.AttackerSteamID = e.Attacker.SteamID64
+		d.AttackerTeam = e.Attacker.Team
+	}
+	c.asm.appendDamage(d)
+}
+
+// openTrajectory starts recording a grenade's flight, with its first point at
+// the thrower's hand.
+func (c *Collector) openTrajectory(pr *common.GrenadeProjectile) {
+	if !c.asm.active() || pr == nil || pr.WeaponInstance == nil || pr.Entity == nil {
+		return
+	}
+	kind := grenadeKind(pr.WeaponInstance.Type)
+	if kind == "" {
+		return
+	}
+
+	// The id is taken at THROW time, so paths are numbered in the order they
+	// were thrown. Numbering them on landing instead - which this did - sorts
+	// a fast flash ahead of the smoke thrown before it, and any consumer that
+	// walks the list expecting time order silently stops early.
+	c.nextProjectile++
+	path := &flightPath{pr: pr, kind: kind, id: c.nextProjectile}
+	if pr.Thrower != nil {
+		path.thrower, path.team = pr.Thrower.SteamID64, pr.Thrower.Team
+	}
+	path.sample(c.tick(), c.asm.phase(), pr.Entity.Position(), true)
+	c.liveProjectiles[pr.UniqueID()] = path
+}
+
+// pollProjectiles samples every grenade still in the air. Reading Position()
+// touches entity properties, so a destroyed entity is dropped and left to
+// closeTrajectory; the map rarely holds more than a few at once.
+func (c *Collector) pollProjectiles() {
+	if len(c.liveProjectiles) == 0 {
+		return
+	}
+	tick, phase := c.tick(), c.asm.phase()
+	for _, path := range c.liveProjectiles {
+		if path.done() || path.pr == nil || path.pr.Entity == nil {
+			continue
+		}
+		path.sample(tick, phase, path.pr.Entity.Position(), false)
+	}
+}
+
+// closeTrajectory stamps the final resting position and flushes the path.
+//
+// A path of one point is dropped: that is a grenade whose whole life fell
+// inside a single frame, or one already in the air when recording started, and
+// a one-point line is not a line.
+func (c *Collector) closeTrajectory(pr *common.GrenadeProjectile) {
+	if pr == nil {
+		return
+	}
+	id := pr.UniqueID()
+	path := c.liveProjectiles[id]
+	delete(c.liveProjectiles, id)
+	if path == nil || !c.asm.active() {
+		return
+	}
+
+	// Only worth a final point if it was still moving. A settled path already
+	// ends where the grenade stopped, and forcing one here would stamp the
+	// entity's destruction tick onto it - which for a smoke is twenty seconds
+	// after it landed.
+	if !path.done() && pr.Entity != nil {
+		path.sample(c.tick(), c.asm.phase(), pr.Entity.Position(), true)
+	}
+	if len(path.points) < 2 {
+		return
+	}
+
+	c.asm.appendTrajectory(path.finish(c.asm.cur.Meta.Number, path.id))
+}
+
+// pollBomb reads the C4 once per frame and writes a row whenever the reading
+// differs from the last one written. See bombTracker for why this is polled
+// rather than driven by BombPickup/BombDropped.
+func (c *Collector) pollBomb() {
+	if !c.asm.active() || c.bomb.terminal {
+		return
+	}
+	bomb := c.parser.GameState().Bomb()
+	if bomb == nil {
+		return
+	}
+
+	// A planted bomb sits where onBombPlanted already recorded it. Re-reading
+	// the entity every frame would only add jitter to a fixed point.
+	if c.bomb.planted {
+		return
+	}
+
+	state, carrier := BombDropped, uint64(0)
+	var team common.Team
+	if bomb.Carrier != nil {
+		state, carrier, team = BombCarried, bomb.Carrier.SteamID64, bomb.Carrier.Team
+	}
+
+	pos := bomb.Position()
+	x, y, z := float32(pos.X), float32(pos.Y), float32(pos.Z)
+
+	// A bomb nobody is carrying, at the exact world origin, is an entity that
+	// has not been networked a real position yet - the same phantom-coordinate
+	// tell isUnspawnedPawn keys on. Writing it would put a C4 marker in the
+	// corner of every radar during the opening frames of a round.
+	if state == BombDropped && x == 0 && y == 0 && z == 0 {
+		return
+	}
+	if !c.bomb.shouldEmit(state, carrier, x, y, z) {
+		return
+	}
+
+	c.asm.appendBomb(BombSample{
+		Round: c.asm.cur.Meta.Number, Tick: c.tick(), Phase: c.asm.phase(),
+		State: state, CarrierSteamID: carrier, CarrierTeam: team,
+		X: x, Y: y, Z: z,
+	})
+}
+
+// onBombPlanted latches the plant and records it at the planter's position.
+//
+// The planter's own position is used rather than the bomb entity's: at this
+// instant the C4 is transitioning from a carried weapon to a planted prop,
+// and the planter is standing on the spot by definition. Both the site and
+// who planted it are recorded on this row, so a consumer never has to join
+// anything to attribute a plant.
+func (c *Collector) onBombPlanted(e events.BombPlanted) {
+	if !c.asm.active() {
+		return
+	}
+	s := BombSample{
+		Round: c.asm.cur.Meta.Number, Tick: c.tick(), Phase: c.asm.phase(),
+		State: BombPlanted, Site: siteName(rune(e.Site)),
+	}
+	if e.Player != nil {
+		pos := e.Player.Position()
+		s.CarrierSteamID = e.Player.SteamID64
+		s.CarrierTeam = e.Player.Team
+		s.X, s.Y, s.Z = float32(pos.X), float32(pos.Y), float32(pos.Z)
+	} else if bomb := c.parser.GameState().Bomb(); bomb != nil {
+		pos := bomb.Position()
+		s.X, s.Y, s.Z = float32(pos.X), float32(pos.Y), float32(pos.Z)
+	}
+
+	c.bomb.plant(s.CarrierSteamID, s.Site, s.X, s.Y, s.Z)
+	c.asm.appendBomb(s)
+}
+
+// onBombFinished records a defuse or an explosion and stops polling for the
+// round. Both sit at the plant position - the defuser is standing on it, and
+// an explosion has nowhere else to be - so the last known coordinates are
+// reused rather than re-read from an entity that is being destroyed.
+func (c *Collector) onBombFinished(state string, player *common.Player) {
+	if !c.asm.active() || c.bomb.terminal {
+		return
+	}
+	s := BombSample{
+		Round: c.asm.cur.Meta.Number, Tick: c.tick(), Phase: c.asm.phase(),
+		State: state, Site: c.bomb.site,
+		X: c.bomb.x, Y: c.bomb.y, Z: c.bomb.z,
+	}
+	if player != nil {
+		s.CarrierSteamID = player.SteamID64
+		s.CarrierTeam = player.Team
+	}
+	c.bomb.terminal = true
+	c.asm.appendBomb(s)
+}
+
 func (c *Collector) sampleFrame() {
 	if !c.asm.active() {
 		return
@@ -481,6 +746,7 @@ func (c *Collector) sampleFrame() {
 			IsScoped:   p.IsScoped(),
 			Health:     int16(p.Health()),
 			Armor:      int16(p.Armor()),
+			Money:      int32(p.Money()),
 			IsAlive:    alive,
 			Place:      p.LastPlaceName(),
 		}
@@ -500,9 +766,30 @@ func (c *Collector) sampleFrame() {
 			}
 		}
 
+		t.Loadout = readLoadout(p)
+		c.trackKit(&t)
+
 		c.readPawnProps(p, &t)
 		c.asm.appendTick(t)
 	}
+}
+
+// trackKit turns this player's has-defuser transition, if any, into a kit
+// event. Called from inside sampleFrame's loop so it sees every sampled player
+// exactly once per tick, which is the contract kitTracker.observe requires -
+// and so it reuses the position and loadout already read rather than walking
+// the roster a second time.
+func (c *Collector) trackKit(t *PlayerTick) {
+	change := c.kits.observe(t.SteamID, t.HasKit, t.X, t.Y)
+	if change.event == "" {
+		return
+	}
+	c.asm.appendKit(KitEvent{
+		Round: t.Round, Tick: t.Tick, Phase: t.Phase,
+		Event: change.event, KitID: change.id,
+		SteamID: t.SteamID, Team: t.Team,
+		X: t.X, Y: t.Y, Z: t.Z,
+	})
 }
 
 // readPawnProps pulls the two pawn properties demoinfocs does not wrap.

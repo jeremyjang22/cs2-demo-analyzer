@@ -5,7 +5,7 @@ something else depends on it.
 
 | Package | Language | Role |
 |---|---|---|
-| `collector/` | Go | `.dem` → rounds, ticks, kills, utility. The parsing core. |
+| `collector/` | Go | `.dem` → rounds, ticks, kills, utility, shots, damage, bomb, kits. The parsing core. |
 | `round-collector/` | Go | CLI wrapper around `collector`. |
 | `web/` | TypeScript | Demo viewer. Reads `movement.json`; draws nothing itself from a `.dem`. |
 
@@ -18,7 +18,8 @@ downstream reads them.
 data/<demo>.dem
       │  round-collector
       ▼
-out/<demo>/          manifest.json · rounds · round_players · kills · utility · ticks.csv.gz
+out/<demo>/          manifest.json · rounds · round_players · kills · utility
+                     shots · damage · bomb · kits · ticks.csv.gz
       │  playground/python/…/export_movement.py
       ▼
 packages/web/public/data/<demo>/movement.json

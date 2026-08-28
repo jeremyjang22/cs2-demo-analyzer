@@ -12,8 +12,9 @@ interface Props {
  * Match scrubber with one chapter block per round, tinted by who won.
  *
  * Blocks are laid out by real elapsed time rather than evenly, so the gaps
- * between them are freeze time and post-round — the shape of the bar matches
- * the shape of the match.
+ * between them are freeze time — the shape of the bar matches the shape of the
+ * match. The postround is inside the block rather than in the gap, hatched,
+ * because it is time you can play through but not time anyone is contesting.
  */
 export default function Timeline({ chapters, duration, t, current, onSeek }: Props) {
   const pct = (v: number) => (duration ? (v / duration) * 100 : 0);
@@ -37,6 +38,12 @@ export default function Timeline({ chapters, duration, t, current, onSeek }: Pro
             onPointerDown={(e) => { e.stopPropagation(); onSeek(c.start); }}
           >
             <span>{c.meta.n}</span>
+            {c.end > c.decided && (
+              <span
+                className="tl-post"
+                style={{ width: `${((c.end - c.decided) / (c.end - c.start)) * 100}%` }}
+              />
+            )}
           </button>
         ))}
         <div className="tl-head" style={{ left: `${pct(t)}%` }} />

@@ -14,8 +14,18 @@ export interface Chapter {
   meta: RoundMeta;
   /** Absolute match seconds where this round's live play starts. */
   start: number;
-  /** Absolute match seconds where it ends. */
+  /**
+   * Absolute match seconds where the win condition was met — where the round
+   * stopped being contested. Everything between here and `end` is postround.
+   */
+  decided: number;
+  /** Absolute match seconds where it ends, postround included. */
   end: number;
+}
+
+/** A round's full playable length: contested play plus the postround tail. */
+export function chapterLength(meta: RoundMeta): number {
+  return meta.dur + (meta.post ?? 0);
 }
 
 export interface Timeline {
@@ -26,7 +36,13 @@ export interface Timeline {
 
 export function buildTimeline(payload: Payload): Timeline {
   const chapters = Object.entries(payload.rounds)
-    .map(([key, meta]) => ({ key, meta, start: meta.t0, end: meta.t0 + meta.dur }))
+    .map(([key, meta]) => ({
+      key,
+      meta,
+      start: meta.t0,
+      decided: meta.t0 + meta.dur,
+      end: meta.t0 + chapterLength(meta),
+    }))
     .sort((a, b) => a.start - b.start);
 
   return {
@@ -56,9 +72,27 @@ export function chapterAt(timeline: Timeline, t: number): Chapter | null {
   return chapters[chapters.length - 1];
 }
 
-/** Seconds into a chapter's own round, clamped to its length. */
+/**
+ * Seconds into a chapter's own round, clamped to its length.
+ *
+ * The clamp runs to the end of the postround, not to the win condition. Every
+ * track and every event in the payload is timed on this clock, so stopping it
+ * at `dur` would freeze the last seven seconds of each round into a single
+ * held frame — which is exactly what it used to do.
+ */
 export function secWithin(chapter: Chapter, t: number): number {
-  return Math.max(0, Math.min(t - chapter.start, chapter.meta.dur));
+  return Math.max(0, Math.min(t - chapter.start, chapterLength(chapter.meta)));
+}
+
+/**
+ * Is `t` past this round's win condition?
+ *
+ * The distinction is worth surfacing rather than leaving implicit: the map
+ * looks identical either side of it, but nothing that happens after changes
+ * who won, and a viewer who cannot tell will misread a save as a fight.
+ */
+export function isPostround(chapter: Chapter, t: number): boolean {
+  return t > chapter.decided;
 }
 
 export function clampTime(timeline: Timeline, t: number): number {

@@ -76,6 +76,19 @@ type PlayerTick struct {
 	FlashRemaining float32 // seconds
 	ActiveWeapon   string
 	Place          string // LastPlaceName(), e.g. "Palace"
+
+	// Money is what the player has left to spend, live. It moves on a buy, on
+	// a kill reward, and at the round-end payout, so unlike the freeze-time
+	// snapshot in round_players.csv this shows the economy DURING the round -
+	// including the moment an eco turns into a full buy next round.
+	Money int32
+
+	// Loadout is everything else the player is carrying: helmet, defuse kit,
+	// the C4, both weapon slots and their grenades. Armor above is part of
+	// the same picture but predates this struct and keeps its own column
+	// position. Subject to the same dead-row caveat as the rest of this
+	// struct - a corpse keeps reporting whatever it last held.
+	Loadout
 }
 
 // TickColumns is the CSV header for ticks.csv.gz, in AppendRow's emit order.
@@ -88,6 +101,8 @@ func TickColumns() []string {
 		"is_ducking", "is_walking", "is_airborne", "is_scoped",
 		"health", "armor", "is_alive", "flash_remaining",
 		"active_weapon", "place",
+		"has_helmet", "has_kit", "has_bomb", "primary", "secondary", "nades",
+		"money",
 	}
 }
 
@@ -114,6 +129,9 @@ func (t *PlayerTick) AppendRow(dst []string) []string {
 		f32(t.FlashRemaining),
 		t.ActiveWeapon,
 		t.Place,
+		b(t.HasHelmet), b(t.HasKit), b(t.HasBomb),
+		t.Primary, t.Secondary, t.Nades,
+		i32(t.Money),
 	)
 }
 

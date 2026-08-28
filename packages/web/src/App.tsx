@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import BombStatus from "./components/BombStatus";
 import KillFeed from "./components/KillFeed";
 import PlaybackBar from "./components/PlaybackBar";
 import Scoreboard from "./components/Scoreboard";
 import Segmented from "./components/Segmented";
 import Timeline from "./components/Timeline";
 import { GAME_COLORS, MovementRenderer, SAFE_COLORS, type Summary, type ViewState } from "./renderer";
-import { scoreBefore, stepRound } from "./timeline";
+import { isPostround, scoreBefore, stepRound } from "./timeline";
 import { assertPayload, type Payload } from "./types";
 
 /** Which demo to load. ?demo=<name> matches a folder under public/data. */
@@ -27,12 +28,16 @@ function initialView(payload: Payload): ViewState {
     cones: true,
     util: true,
     labels: true,
+    fire: true,
+    bomb: true,
+    deaths: true,
     palette: "game",
   };
 }
 
 const EMPTY: Summary = {
   t: 0, sec: 0, chapter: null, kills: [], alive: new Set<string>(), perFloor: [],
+  equip: new Map(), bomb: null,
 };
 
 export default function App() {
@@ -127,6 +132,11 @@ export default function App() {
   const timeline = { chapters: r?.chapters ?? [], duration: r?.matchDuration ?? 0 };
   const [sa, sb] = chapter ? scoreBefore(timeline, chapter) : [0, 0];
   const roundLabel = chapter ? `Round ${chapter.meta.n}` : "—";
+  // Seconds past the win condition, plus why the round ended — the two facts
+  // that turn "why is nobody shooting" into "this is a save".
+  const postround = chapter && isPostround(chapter, summary.t)
+    ? `${chapter.meta.why} · +${(summary.t - chapter.decided).toFixed(1)}s`
+    : undefined;
 
   const toggle = (id: string) =>
     patch({
@@ -169,10 +179,14 @@ export default function App() {
             colors={colors}
             selected={view.selected}
             alive={summary.alive}
+            equip={summary.equip}
             onToggle={toggle}
             onToggleTeam={toggleTeam}
           />
-          <div className="hint">Click a row to hide it on the map. Dimmed = dead right now.</div>
+          <div className="hint">
+            Click a row to hide it on the map. Dimmed = dead right now. The
+            second line is what they are carrying at this moment.
+          </div>
         </fieldset>
 
         <fieldset>
@@ -212,6 +226,38 @@ export default function App() {
               onChange={(v) => patch({ labels: v === "on" })}
             />
           </div>
+          <div style={{ marginTop: 4 }}>
+            <Segmented
+              options={[{ value: "on", label: "Fire" }, { value: "off", label: "No fire" }]}
+              value={view.fire ? "on" : "off"}
+              onChange={(v) => patch({ fire: v === "on" })}
+            />
+          </div>
+          <div style={{ marginTop: 4 }}>
+            <Segmented
+              options={[{ value: "on", label: "Bomb" }, { value: "off", label: "No bomb" }]}
+              value={view.bomb ? "on" : "off"}
+              onChange={(v) => patch({ bomb: v === "on" })}
+            />
+          </div>
+          <div style={{ marginTop: 4 }}>
+            <Segmented
+              options={[{ value: "on", label: "Deaths" }, { value: "off", label: "No deaths" }]}
+              value={view.deaths ? "on" : "off"}
+              onChange={(v) => patch({ deaths: v === "on" })}
+            />
+          </div>
+          <div className="hint">
+            Fire draws bullet tracers and the damage they landed; a tracer
+            that fades out hit no one, because the demo only records where a
+            shot stopped when it hurt somebody. Utility includes grenade
+            flight paths. Deaths marks where each player fell this round.
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Bomb</legend>
+          <BombStatus bomb={summary.bomb} names={names} />
         </fieldset>
 
         <fieldset>
@@ -237,6 +283,7 @@ export default function App() {
           t={summary.t}
           duration={timeline.duration}
           roundLabel={roundLabel}
+          postround={postround}
           onToggle={() => {
             if (!r) return;
             if (r.playing) { r.pause(); setPlaying(false); }

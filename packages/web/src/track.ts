@@ -3,7 +3,7 @@
  * worth testing, and the part that has already produced one hard bug.
  */
 
-import type { RoundTrack } from "./types";
+import { EQ_BOMB, EQ_HELMET, EQ_KIT, type Loadout, type RoundTrack } from "./types";
 
 /** Fractional sample index for a time in seconds. Never negative. */
 export function idxAt(sec: number, hz: number): number {
@@ -63,6 +63,48 @@ export function yawAt(track: RoundTrack, sec: number, hz: number): number {
   const a = track.yaw[i];
   const delta = ((track.yaw[i + 1] - a + 540) % 360) - 180;
   return a + delta * f;
+}
+
+/** An empty loadout — what a track with no equipment data reports. */
+const NO_LOADOUT: Loadout = {
+  hp: 0, armor: 0, money: 0, helmet: false, kit: false, bomb: false,
+  primary: "", secondary: "", nades: "",
+};
+
+/**
+ * Loadout at `sec`, from the track's sparse change list.
+ *
+ * Entries hold until the next one, so this is a lookup for the last change at
+ * or before the sample — not an interpolation. Interpolating equipment would
+ * be meaningless: a player either has the AWP or does not.
+ *
+ * A track with no `eq` reports the empty loadout rather than throwing. Older
+ * payloads simply do not carry it, and a scoreboard with blank equipment is a
+ * better failure than a blank scoreboard.
+ */
+export function equipAt(track: RoundTrack, sec: number, hz: number): Loadout {
+  const entries = track.eq;
+  if (!entries || entries.length === 0) return NO_LOADOUT;
+
+  const target = Math.floor(idxAt(sec, hz));
+  let found = entries[0];
+  for (const entry of entries) {
+    if (entry[0] > target) break;
+    found = entry;
+  }
+
+  const [, hp, armor, money, flags, primary, secondary, nades] = found;
+  return {
+    hp,
+    armor,
+    money,
+    helmet: (flags & EQ_HELMET) !== 0,
+    kit: (flags & EQ_KIT) !== 0,
+    bomb: (flags & EQ_BOMB) !== 0,
+    primary,
+    secondary,
+    nades,
+  };
 }
 
 export interface Run {

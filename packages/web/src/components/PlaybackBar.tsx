@@ -4,6 +4,8 @@ interface Props {
   t: number;
   duration: number;
   roundLabel: string;
+  /** Set once the round is decided — everything after is the save window. */
+  postround?: string;
   onToggle: () => void;
   onNudge: (delta: number) => void;
   onRound: (delta: number) => void;
@@ -20,7 +22,7 @@ function clock(sec: number): string {
 }
 
 export default function PlaybackBar({
-  playing, speed, t, duration, roundLabel,
+  playing, speed, t, duration, roundLabel, postround,
   onToggle, onNudge, onRound, onEdge, onSpeed,
 }: Props) {
   return (
@@ -40,6 +42,9 @@ export default function PlaybackBar({
         <span className="tclock">{clock(t)}</span>
         <span className="muted"> / {clock(duration)}</span>
         <span className="tround">{roundLabel}</span>
+        {/* The map looks the same either side of the win condition. Without
+            this, a save reads as an ordinary fight nobody is winning. */}
+        {postround && <span className="tpost">{postround}</span>}
         <span className="tspeed">
           {SPEEDS.map((s) => (
             <button

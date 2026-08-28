@@ -14,6 +14,11 @@ re-derive them from prose. This module is that document made executable:
 4. `yaw` wraps at +/-180                   -> `yaw_delta()`.
 5. `phase` has three values, you want one  -> `phase` (default "live").
 
+The event tables have their own loaders with the same shape: load_kills,
+load_shots, load_damage and load_bomb. load_bomb defaults to every phase
+rather than "live", because the bomb is picked up in freezetime and can
+explode after the round is already decided.
+
 Prefers ticks.parquet when the collector writes one, falling back to the
 gzipped CSV, so callers do not change when the storage format does.
 """
@@ -30,6 +35,16 @@ import pandas as pd
 SCHEMA_MAJOR = "1"
 
 PHASES = ("freeze", "live", "postround")
+
+# Weapons whose fire event is not a bullet leaving a barrel. shots.csv records
+# them on purpose — it is the only table that says when a grenade was thrown —
+# but a tracer drawn along the view angle would be wrong for every one of them.
+# Names are demoinfocs' display strings, which is what the collector writes.
+NON_BULLET_WEAPONS = frozenset({
+    "Knife", "Zeus x27", "C4",
+    "Smoke Grenade", "Flashbang", "HE Grenade",
+    "Molotov", "Incendiary Grenade", "Decoy Grenade",
+})
 
 # Columns load_ticks needs in hand to apply its own filters, whatever the
 # caller asked for.
@@ -130,7 +145,13 @@ def load_ticks(demo_dir, *, alive_only=True, phase="live", vel_valid_only=False,
     if path.suffix == ".parquet":
         ticks = pd.read_parquet(path, columns=read)
     else:
-        ticks = pd.read_csv(path, usecols=read)
+        # low_memory=False reads the file in one pass instead of inferring a
+        # dtype per chunk. The mostly-empty string columns (primary, secondary,
+        # nades, active_weapon, place) come out as float NaN in the chunks
+        # where nobody had one and as object elsewhere, which is both a silent
+        # correctness trap and, combined with usecols, a live crash in pandas'
+        # own mixed-dtype warning path.
+        ticks = pd.read_csv(path, usecols=read, low_memory=False)
 
     if alive_only:
         ticks = ticks[ticks["is_alive"] == 1]
@@ -177,6 +198,125 @@ def load_kills(demo_dir, *, phase="live", dedupe=True) -> pd.DataFrame:
         kills = kills.sort_values("tick").drop_duplicates(
             subset=["round", "victim_steamid"], keep="first")
     return kills.reset_index(drop=True)
+
+
+def load_shots(demo_dir, *, phase="live", bullets_only=False) -> pd.DataFrame:
+    """One row per weapon fire: who, from where, facing which way.
+
+    bullets_only  drop knife swings and grenade throws. They are real fires and
+                  the collector records them deliberately, but a tracer drawn
+                  for a thrown smoke is a lie — the projectile does not travel
+                  along the view angle. Off by default so the raw table is
+                  still what you get.
+
+    There is no endpoint column; see hit_positions() for why, and for the join
+    that recovers one where the shot actually landed on somebody.
+    """
+    shots = pd.read_csv(Path(demo_dir) / "shots.csv")
+
+    phases = _normalise_phase(phase)
+    if phases is not None:
+        shots = shots[shots["phase"].isin(phases)]
+    if bullets_only:
+        shots = shots[~shots["weapon"].isin(NON_BULLET_WEAPONS)]
+    return shots.reset_index(drop=True)
+
+
+def load_damage(demo_dir, *, phase="live", kinds=None) -> pd.DataFrame:
+    """One row per damage event, with a derived `kind` column.
+
+    kinds  keep only these kinds, e.g. ["bullet"] or ["he", "fire"]. None keeps
+           everything. See docs/round-collector-schema.md for the closed set.
+    """
+    damage = pd.read_csv(Path(demo_dir) / "damage.csv")
+
+    phases = _normalise_phase(phase)
+    if phases is not None:
+        damage = damage[damage["phase"].isin(phases)]
+    if kinds is not None:
+        damage = damage[damage["kind"].isin(list(kinds))]
+    return damage.reset_index(drop=True)
+
+
+def load_bomb(demo_dir, *, phase=None) -> pd.DataFrame:
+    """One row per C4 state change.
+
+    phase defaults to None here, unlike everywhere else in this module. The
+    bomb is picked up during freezetime and can explode after the round is
+    decided, so the usual "live" filter would cut both ends off the story.
+    """
+    bomb = pd.read_csv(Path(demo_dir) / "bomb.csv")
+    bomb["site"] = bomb["site"].fillna("")
+
+    phases = _normalise_phase(phase)
+    if phases is not None:
+        bomb = bomb[bomb["phase"].isin(phases)]
+    return bomb.reset_index(drop=True)
+
+
+def load_kits(demo_dir, *, phase=None) -> pd.DataFrame:
+    """Defuse kits hitting the ground and being picked back up.
+
+    Like load_bomb, this defaults to every phase: a kit dropped by the last CT
+    to die is often dropped during postround, and it is still the kit lying
+    there when the round ends.
+
+    This table is DERIVED, not observed - CS2 does not network a dropped kit as
+    an entity, so these rows are reconstructed from per-player state. Read
+    collector.KitEvent's doc comment before treating them like kills.csv.
+    """
+    kits = pd.read_csv(Path(demo_dir) / "kits.csv")
+
+    phases = _normalise_phase(phase)
+    if phases is not None:
+        kits = kits[kits["phase"].isin(phases)]
+    return kits.reset_index(drop=True)
+
+
+def load_trajectories(demo_dir, *, phase=None) -> pd.DataFrame:
+    """Grenade flight paths, one row per sampled point.
+
+    Group by ["round", "projectile_id"] and sort by "seq" to get one throw as a
+    polyline. Defaults to every phase: grenades thrown as a round ends keep
+    flying into the postround.
+    """
+    traj = pd.read_csv(Path(demo_dir) / "trajectories.csv")
+
+    phases = _normalise_phase(phase)
+    if phases is not None:
+        traj = traj[traj["phase"].isin(phases)]
+    return traj.reset_index(drop=True)
+
+
+def hit_positions(shots: pd.DataFrame, damage: pd.DataFrame) -> pd.DataFrame:
+    """Attach the victim's position to every shot that hit somebody.
+
+    A demo never traces a bullet. What it does record is that a weapon fired at
+    tick t and that someone took damage at tick t from the same attacker, which
+    is enough to say where that bullet stopped. Shots that hit a wall have no
+    match and keep NaN endpoints — that is the honest answer, not a failure.
+
+    A shotgun blast damaging two players at once produces two damage rows for
+    one shot; the nearest one wins, since that is where the visible tracer
+    terminated. Ties are broken by taking the first, so the result is stable.
+    """
+    hits = damage[damage["attacker_steamid"] != 0][
+        ["round", "tick", "attacker_steamid", "x", "y", "z"]
+    ].rename(columns={"attacker_steamid": "steamid", "x": "hit_x", "y": "hit_y", "z": "hit_z"})
+
+    # merge() hands back a fresh RangeIndex, so the shot a row came from has to
+    # be carried explicitly - without it there is nothing to deduplicate on and
+    # a shotgun blast quietly turns into several shots.
+    merged = shots.assign(_shot=range(len(shots))).merge(
+        hits, on=["round", "tick", "steamid"], how="left")
+
+    dist = (merged["hit_x"] - merged["x"]) ** 2 + (merged["hit_y"] - merged["y"]) ** 2
+    merged = (merged.assign(_d=dist)
+              .sort_values(["_shot", "_d"], na_position="last")
+              .drop_duplicates(subset="_shot", keep="first")
+              .sort_values("_shot")
+              .drop(columns=["_d", "_shot"]))
+    return merged.reset_index(drop=True)
 
 
 def load_players(demo_dir) -> pd.DataFrame:

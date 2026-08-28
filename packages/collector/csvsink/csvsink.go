@@ -8,6 +8,11 @@
 //	<dir>/round_players.csv    one row per (round, player)
 //	<dir>/kills.csv            one row per death
 //	<dir>/utility.csv          one row per grenade effect
+//	<dir>/shots.csv            one row per weapon fire
+//	<dir>/damage.csv           one row per damage event
+//	<dir>/bomb.csv             one row per C4 state change
+//	<dir>/kits.csv             one row per defuse kit dropped or taken
+//	<dir>/trajectories.csv     one row per point on a thrown grenade's path
 //	<dir>/ticks.csv.gz         one row per (round, tick, player)
 package csvsink
 
@@ -32,7 +37,16 @@ import (
 // molotov/incendiary. All additive at the file level - a header-aware consumer
 // keeps working - but note 1.3 changes a VALUE, not just a column: anything
 // filtering kind == 'molotov' now misses roughly 60% of fire.
-const schemaVersion = "1.3"
+// 1.4 added shots.csv, damage.csv and bomb.csv, plus six trailing loadout
+// columns on ticks.csv.gz (has_helmet, has_kit, has_bomb, primary, secondary,
+// nades). Purely additive: existing columns keep their positions and their
+// meanings.
+// 1.5 added kits.csv. Note this is the first DERIVED table the collector
+// writes - CS2 does not network a dropped defuse kit as an entity, so those
+// rows are reconstructed from per-player state rather than observed. See
+// collector.KitEvent before trusting them the way you trust kills.csv.
+// 1.6 added trajectories.csv and a trailing money column on ticks.csv.gz.
+const schemaVersion = "1.6"
 
 // Meta is the run-level information the manifest records.
 type Meta struct {
@@ -58,6 +72,11 @@ type manifest struct {
 	TickRows       int64               `json:"tick_rows"`
 	KillRows       int64               `json:"kill_rows"`
 	UtilityRows    int64               `json:"utility_rows"`
+	ShotRows       int64               `json:"shot_rows"`
+	DamageRows     int64               `json:"damage_rows"`
+	BombRows       int64               `json:"bomb_rows"`
+	KitRows        int64               `json:"kit_rows"`
+	TrajectoryRows int64               `json:"trajectory_rows"`
 	Complete       bool                `json:"complete"`
 	VelocitySource string              `json:"velocity_source"`
 	Columns        map[string][]string `json:"columns"`
@@ -80,6 +99,16 @@ type Sink struct {
 	kills        *csv.Writer
 	utilFile     *os.File
 	utility      *csv.Writer
+	shotsFile    *os.File
+	shots        *csv.Writer
+	damageFile   *os.File
+	damage       *csv.Writer
+	bombFile     *os.File
+	bomb         *csv.Writer
+	kitsFile     *os.File
+	kits         *csv.Writer
+	trajFile     *os.File
+	trajectories *csv.Writer
 
 	buf []string // reused across every tick row to avoid millions of allocations
 
@@ -87,6 +116,11 @@ type Sink struct {
 	nTicks   int64
 	nKills   int64
 	nUtility int64
+	nShots   int64
+	nDamage  int64
+	nBomb    int64
+	nKits    int64
+	nTraj    int64
 	complete bool
 	closed   bool // guards Close() against double-closing its files on a second call
 }
@@ -156,6 +190,46 @@ func New(dir string, meta Meta) (*Sink, error) {
 		return nil, fmt.Errorf("write utility header: %w", err)
 	}
 
+	if s.shotsFile, err = os.Create(filepath.Join(dir, "shots.csv")); err != nil {
+		return nil, fmt.Errorf("create shots.csv: %w", err)
+	}
+	s.shots = csv.NewWriter(s.shotsFile)
+	if err := s.shots.Write(collector.ShotColumns()); err != nil {
+		return nil, fmt.Errorf("write shots header: %w", err)
+	}
+
+	if s.damageFile, err = os.Create(filepath.Join(dir, "damage.csv")); err != nil {
+		return nil, fmt.Errorf("create damage.csv: %w", err)
+	}
+	s.damage = csv.NewWriter(s.damageFile)
+	if err := s.damage.Write(collector.DamageColumns()); err != nil {
+		return nil, fmt.Errorf("write damage header: %w", err)
+	}
+
+	if s.bombFile, err = os.Create(filepath.Join(dir, "bomb.csv")); err != nil {
+		return nil, fmt.Errorf("create bomb.csv: %w", err)
+	}
+	s.bomb = csv.NewWriter(s.bombFile)
+	if err := s.bomb.Write(collector.BombColumns()); err != nil {
+		return nil, fmt.Errorf("write bomb header: %w", err)
+	}
+
+	if s.kitsFile, err = os.Create(filepath.Join(dir, "kits.csv")); err != nil {
+		return nil, fmt.Errorf("create kits.csv: %w", err)
+	}
+	s.kits = csv.NewWriter(s.kitsFile)
+	if err := s.kits.Write(collector.KitColumns()); err != nil {
+		return nil, fmt.Errorf("write kits header: %w", err)
+	}
+
+	if s.trajFile, err = os.Create(filepath.Join(dir, "trajectories.csv")); err != nil {
+		return nil, fmt.Errorf("create trajectories.csv: %w", err)
+	}
+	s.trajectories = csv.NewWriter(s.trajFile)
+	if err := s.trajectories.Write(collector.TrajectoryColumns()); err != nil {
+		return nil, fmt.Errorf("write trajectories header: %w", err)
+	}
+
 	ok = true
 	return s, nil
 }
@@ -181,6 +255,21 @@ func (s *Sink) closeAll() {
 	}
 	if s.utilFile != nil {
 		s.utilFile.Close()
+	}
+	if s.shotsFile != nil {
+		s.shotsFile.Close()
+	}
+	if s.damageFile != nil {
+		s.damageFile.Close()
+	}
+	if s.bombFile != nil {
+		s.bombFile.Close()
+	}
+	if s.kitsFile != nil {
+		s.kitsFile.Close()
+	}
+	if s.trajFile != nil {
+		s.trajFile.Close()
 	}
 }
 
@@ -232,6 +321,41 @@ func (s *Sink) Round(r *collector.Round) error {
 		}
 	}
 
+	for i := range r.Shots {
+		s.buf = r.Shots[i].AppendRow(s.buf[:0])
+		if err := s.shots.Write(s.buf); err != nil {
+			return fmt.Errorf("write shot r%d: %w", m.Number, err)
+		}
+	}
+
+	for i := range r.Damage {
+		s.buf = r.Damage[i].AppendRow(s.buf[:0])
+		if err := s.damage.Write(s.buf); err != nil {
+			return fmt.Errorf("write damage r%d: %w", m.Number, err)
+		}
+	}
+
+	for i := range r.Bomb {
+		s.buf = r.Bomb[i].AppendRow(s.buf[:0])
+		if err := s.bomb.Write(s.buf); err != nil {
+			return fmt.Errorf("write bomb r%d: %w", m.Number, err)
+		}
+	}
+
+	for i := range r.Kits {
+		s.buf = r.Kits[i].AppendRow(s.buf[:0])
+		if err := s.kits.Write(s.buf); err != nil {
+			return fmt.Errorf("write kit r%d: %w", m.Number, err)
+		}
+	}
+
+	for i := range r.Trajectories {
+		s.buf = r.Trajectories[i].AppendRow(s.buf[:0])
+		if err := s.trajectories.Write(s.buf); err != nil {
+			return fmt.Errorf("write trajectory r%d: %w", m.Number, err)
+		}
+	}
+
 	for i := range r.Ticks {
 		s.buf = r.Ticks[i].AppendRow(s.buf[:0])
 		if err := s.ticks.Write(s.buf); err != nil {
@@ -243,6 +367,11 @@ func (s *Sink) Round(r *collector.Round) error {
 	s.nTicks += int64(len(r.Ticks))
 	s.nKills += int64(len(r.Kills))
 	s.nUtility += int64(len(r.Utility))
+	s.nShots += int64(len(r.Shots))
+	s.nDamage += int64(len(r.Damage))
+	s.nBomb += int64(len(r.Bomb))
+	s.nKits += int64(len(r.Kits))
+	s.nTraj += int64(len(r.Trajectories))
 	if !m.Complete {
 		s.complete = false
 	}
@@ -294,6 +423,26 @@ func (s *Sink) Close() error {
 	record("flush utility", s.utility.Error())
 	record("close utility file", s.utilFile.Close())
 
+	s.shots.Flush()
+	record("flush shots", s.shots.Error())
+	record("close shots file", s.shotsFile.Close())
+
+	s.damage.Flush()
+	record("flush damage", s.damage.Error())
+	record("close damage file", s.damageFile.Close())
+
+	s.bomb.Flush()
+	record("flush bomb", s.bomb.Error())
+	record("close bomb file", s.bombFile.Close())
+
+	s.kits.Flush()
+	record("flush kits", s.kits.Error())
+	record("close kits file", s.kitsFile.Close())
+
+	s.trajectories.Flush()
+	record("flush trajectories", s.trajectories.Error())
+	record("close trajectories file", s.trajFile.Close())
+
 	if first != nil {
 		return first
 	}
@@ -321,6 +470,11 @@ func (s *Sink) writeManifest() error {
 		TickRows:       s.nTicks,
 		KillRows:       s.nKills,
 		UtilityRows:    s.nUtility,
+		ShotRows:       s.nShots,
+		DamageRows:     s.nDamage,
+		BombRows:       s.nBomb,
+		KitRows:        s.nKits,
+		TrajectoryRows: s.nTraj,
 		Complete:       s.complete,
 		VelocitySource: "position_diff",
 		Columns: map[string][]string{
@@ -329,6 +483,11 @@ func (s *Sink) writeManifest() error {
 			"round_players": collector.RoundPlayerColumns(),
 			"kills":         collector.KillColumns(),
 			"utility":       collector.UtilityColumns(),
+			"shots":         collector.ShotColumns(),
+			"damage":        collector.DamageColumns(),
+			"bomb":          collector.BombColumns(),
+			"kits":          collector.KitColumns(),
+			"trajectories":  collector.TrajectoryColumns(),
 		},
 	}
 

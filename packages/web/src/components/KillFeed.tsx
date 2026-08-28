@@ -22,13 +22,20 @@ export default function KillFeed({ kills, names, colors, teamOf }: Props) {
   return (
     <ul className="feed">
       {recent.map((k, i) => (
-        <li key={`${k.t}-${k.v}-${i}`}>
+        <li key={`${k.t}-${k.v}-${i}`} className={k.post === undefined ? "" : "post"}>
           <span className="feed-t">{k.t.toFixed(0)}s</span>
           {who(k.k, "world")}
           <span className="feed-w">
             {k.w}
             {k.hs === 1 && <span className="tag hs" title="headshot">HS</span>}
             {k.wb === 1 && <span className="tag wb" title="wallbang">WB</span>}
+            {/* The round was already decided. Worth its own mark: it changes
+                nothing about who won, and everything about who kept a rifle. */}
+            {k.post !== undefined && (
+              <span className="tag post" title={`${k.post.toFixed(1)}s after the round was decided`}>
+                +{k.post.toFixed(1)}s
+              </span>
+            )}
           </span>
           {who(k.v, "?")}
         </li>
