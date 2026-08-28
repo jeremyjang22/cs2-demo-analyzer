@@ -1,0 +1,32 @@
+{
+  // Deployed by .github/workflows/deploy-web.yml. `npm run build` must run
+  // first: `assets.directory` below is the Vite output, not a source folder.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "juzz",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-08-01",
+  "observability": { "enabled": true },
+
+  "assets": {
+    "directory": "dist",
+    "binding": "ASSETS",
+    // The app is one page and reads its state from the query string, so any
+    // path that is not a real file should still hand back index.html rather
+    // than a 404. Note the Worker's own routes are matched first — see
+    // worker/index.ts — so /api and /data never reach this.
+    "not_found_handling": "single-page-application"
+  },
+
+  "r2_buckets": [
+    {
+      "binding": "DEMOS",
+      "bucket_name": "cs2-demo-payloads"
+    }
+  ],
+
+  "vars": {
+    // The Northflank service URL. Not a secret — it is a public hostname, and
+    // keeping it here means the value that shipped is visible in the diff.
+    "API_ORIGIN": "https://p01--runner--vhddqzfzn725.code.run"
+  }
+}

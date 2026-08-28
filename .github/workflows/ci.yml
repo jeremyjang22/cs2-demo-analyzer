@@ -1,0 +1,92 @@
+# Every push and every PR. Nothing deploys from here — this is the gate the
+# deploy workflows re-run before they ship anything.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch makes the first run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # The Go module root is packages/, not the repo root: the api imports
+          # the collector package, so they share one module.
+          go-version-file: packages/go.mod
+          cache-dependency-path: packages/go.sum
+
+      - name: build
+        working-directory: packages
+        run: go build ./...
+
+      - name: vet
+        working-directory: packages
+        run: go vet ./...
+
+      - name: test
+        working-directory: packages
+        run: go test ./...
+
+      - name: gofmt
+        working-directory: packages
+        # gofmt -l prints files that need formatting and exits 0 either way,
+        # so the exit code has to come from whether it printed anything.
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"; echo "$unformatted"; exit 1
+          fi
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/web/package-lock.json
+
+      - run: npm ci
+
+      - run: npm test
+
+      # Also typechecks the Worker, and syncs assets/radar into public/ the way
+      # a real build does — so a missing radar asset fails here, not at deploy.
+      - run: npm run build
+
+  # The Docker build is the artifact the API deploy ships. Building it on a PR
+  # costs a minute and turns "the image does not build" from a deploy-time
+  # failure into a review-time one.
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          # Build context is packages/, matching the Dockerfile's own comment:
+          # the api imports collector, so both must be inside the context.
+          context: packages
+          file: packages/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

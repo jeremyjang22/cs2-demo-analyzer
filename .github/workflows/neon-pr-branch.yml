@@ -1,0 +1,96 @@
+# A disposable copy of production's database for every pull request.
+#
+# The point is not the branch, it is the proof: migrations are applied to a
+# real copy of the production schema, so "this migration does not apply" is a
+# red PR instead of a red deploy. Atlas computes migrations against a scratch
+# database locally, which says the SQL is valid — it says nothing about whether
+# it survives contact with the data already in production.
+name: neon-pr-branch
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+    paths:
+      - "packages/api/migrations/**"
+      - "packages/api/schema/schema.sql"
+      - ".github/workflows/neon-pr-branch.yml"
+
+concurrency:
+  group: neon-pr-${{ github.event.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  migrate:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: create a database branch for this PR
+        id: branch
+        uses: neondatabase/create-branch-action@v6
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          # Reusing one name per PR means a re-push resets to the same branch
+          # instead of accumulating one per commit.
+          branch_name: preview/pr-${{ github.event.number }}
+          parent_branch: ${{ vars.NEON_PRODUCTION_BRANCH || 'main' }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - uses: ariga/setup-atlas@v0
+
+      - name: apply migrations to the branch
+        working-directory: packages/api
+        env:
+          # db_url is the DIRECT connection; db_url_pooled would be the pooled
+          # one, which cannot hold the session state migrations need.
+          BRANCH_URL: ${{ steps.branch.outputs.db_url }}
+        run: |
+          # --allow-dirty on purpose here, unlike the production apply. A fresh
+          # Neon branch carries the neon_auth schema Neon provisions into every
+          # database, which sits outside the public schema Atlas manages and
+          # would otherwise read as an unexpected object.
+          atlas migrate apply \
+            --dir "file://migrations" \
+            --url "$BRANCH_URL" \
+            --revisions-schema public \
+            --allow-dirty
+
+      - name: check the migration directory is intact
+        working-directory: packages/api
+        # atlas.sum is a checksum over the migration files. Editing an already
+        # applied migration instead of adding a new one breaks it, and that is
+        # a mistake worth catching before merge rather than at deploy.
+        run: atlas migrate validate --dir "file://migrations"
+
+      - name: comment the branch on the PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- neon-branch -->';
+            const body = `${marker}\n**Neon preview branch** \`preview/pr-${{ github.event.number }}\`\n\n`
+              + `Migrations applied cleanly to a copy of production. The branch is deleted when this PR closes.`;
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: context.issue.number,
+            });
+            const existing = comments.find((c) => c.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+            }
+
+  cleanup:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: delete the branch
+        uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch: preview/pr-${{ github.event.number }}
+          api_key: ${{ secrets.NEON_API_KEY }}

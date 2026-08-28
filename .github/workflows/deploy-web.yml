@@ -1,0 +1,58 @@
+# main → build the SPA → publish the Worker that fronts it.
+#
+# Note what is NOT here: the demo payloads. public/data/ is built from .dem
+# files that never enter the repo, so CI cannot produce them and has nothing to
+# verify them against. They go to R2 by hand — `npm run upload-data` — and the
+# Worker serves them from there. A deploy therefore ships the app, never the
+# data, and the two are independently replaceable.
+name: deploy-web
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/web/**"
+      - "assets/radar/**"
+      - ".github/workflows/deploy-web.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-web
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: packages/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/web/package-lock.json
+
+      - run: npm ci
+
+      - run: npm test
+
+      # Syncs assets/radar → public/radar, typechecks app and Worker, then
+      # builds into dist/ — which is what wrangler.jsonc uploads as assets.
+      - run: npm run build
+
+      - name: publish the Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: packages/web
+          # API_ORIGIN lives in wrangler.jsonc rather than being injected here:
+          # it is a public hostname, and keeping it in the file means the value
+          # that shipped is visible in the commit that shipped it.

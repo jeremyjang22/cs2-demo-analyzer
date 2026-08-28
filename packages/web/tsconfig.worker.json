@@ -1,0 +1,18 @@
+{
+  "//": "The Worker runs on workerd, not in a browser: different globals, different lib. Kept separate from tsconfig.json so the app never sees R2Bucket and the Worker never sees the DOM.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "types": ["@cloudflare/workers-types"]
+  },
+  "include": ["worker"]
+}

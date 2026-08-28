@@ -5,18 +5,21 @@
   "type": "module",
   "scripts": {
     "dev": "npm run radar && vite",
-    "build": "npm run radar && tsc --noEmit && vite build",
+    "build": "npm run radar && npm run typecheck && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
-    "radar": "node scripts/sync-radar.mjs"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json",
+    "radar": "node scripts/sync-radar.mjs",
+    "deploy": "npm run build && npx --yes wrangler@4 deploy",
+    "upload-data": "node scripts/upload-data.mjs"
   },
   "dependencies": {
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260827.1",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.0.0",

@@ -1,0 +1,153 @@
+# main → GHCR → Neon migrations → Northflank.
+#
+# The order matters and is not arbitrary: the schema is migrated BEFORE the new
+# image rolls out, so the code that needs a column never starts before the
+# column exists. That works as long as migrations are additive — the old
+# revision keeps serving during the rollout and must still be able to read the
+# database. A destructive change (dropping or renaming a column the running
+# code still selects) has to be split across two deploys: add and backfill
+# first, remove only once nothing references it.
+name: deploy-api
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/api/**"
+      - "packages/collector/**"
+      - "packages/go.mod"
+      - "packages/go.sum"
+      - "packages/Dockerfile"
+      - ".github/workflows/deploy-api.yml"
+  # Rolling back is re-running an old commit's deploy, so this needs to be
+  # startable by hand.
+  workflow_dispatch:
+
+# Never let two deploys race to the same database.
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: packages/go.mod
+          cache-dependency-path: packages/go.sum
+      - name: test
+        working-directory: packages
+        run: go test ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.tags }}
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/api
+          # One immutable tag per commit. Not `latest`: Northflank needs to be
+          # told a specific thing to run, and a moving tag makes "what is
+          # actually deployed" unanswerable.
+          tags: type=sha,format=long,prefix=
+
+      - id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: packages
+          file: packages/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  migrate:
+    needs: build
+    runs-on: ubuntu-latest
+    # A schema change reaching production is worth a human gate. Create an
+    # environment named "production" in repo settings to require an approval;
+    # without one this just runs.
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ariga/setup-atlas@v0
+
+      - name: apply migrations
+        working-directory: packages/api
+        env:
+          # The DIRECT Neon endpoint, not -pooler. Migrations need real session
+          # state that a connection pooler does not provide.
+          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL_DIRECT }}
+        run: |
+          # Flags rather than `--env neon`, deliberately. atlas.hcl declares a
+          # dev database for computing diffs, and resolving that env here would
+          # demand a DATABASE_DEV_URL that production has no reason to own.
+          # --revisions-schema mirrors atlas.hcl's revisions_schema = "public",
+          # which exists because the connection is scoped to public and cannot
+          # reach Atlas's default bookkeeping schema.
+          atlas migrate apply \
+            --dir "file://migrations" \
+            --url "$DATABASE_URL" \
+            --revisions-schema public
+
+  deploy:
+    needs: [build, migrate]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: roll out to Northflank
+        uses: northflank/deploy-to-northflank@v1
+        with:
+          northflank-api-key: ${{ secrets.NORTHFLANK_API_KEY }}
+          project-id: ${{ vars.NORTHFLANK_PROJECT_ID }}
+          service-id: ${{ vars.NORTHFLANK_SERVICE_ID }}
+          image-path: ${{ needs.build.outputs.image }}
+          # No credentials-id: the GHCR package is public, so Northflank pulls
+          # anonymously. The input is optional in the action. If the package is
+          # ever made private, add a registry credential under Northflank's
+          # team-level Integrations → Registries and pass its id here.
+
+      - name: wait for the new revision to answer
+        env:
+          API_HEALTH_URL: ${{ vars.API_HEALTH_URL }}
+        # Northflank returns as soon as it has accepted the rollout, which is
+        # not the same as the new container serving. Poll /health so a failed
+        # boot — a bad connection string, a missing secret — shows up as a red
+        # deploy here instead of as 502s later.
+        run: |
+          if [ -z "$API_HEALTH_URL" ]; then
+            echo "API_HEALTH_URL not set; skipping the post-deploy check"; exit 0
+          fi
+          for i in $(seq 1 30); do
+            body=$(curl -fsS --max-time 10 "$API_HEALTH_URL" 2>/dev/null || true)
+            case "$body" in
+              *'"database":"ok"'*) echo "healthy: $body"; exit 0 ;;
+            esac
+            echo "attempt $i: not ready yet"
+            sleep 10
+          done
+          echo "::error::the API never reported healthy after 5 minutes"
+          exit 1
