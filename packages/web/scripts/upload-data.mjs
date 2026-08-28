@@ -67,9 +67,11 @@ for (const demo of demos) {
 
   // --remote targets the real bucket; without it wrangler writes to the local
   // simulator and the upload silently goes nowhere the Worker can see it.
+  // The local wrangler from devDependencies, so the version that uploads is
+  // the version in the lockfile rather than whatever npx resolves today.
   const r = spawnSync(
     "npx",
-    ["--yes", "wrangler@4", "r2", "object", "put", `${bucket}/${key}`,
+    ["wrangler", "r2", "object", "put", `${bucket}/${key}`,
       "--file", file, "--content-type", "application/json", "--remote"],
     { stdio: "inherit", shell: process.platform === "win32" },
   );
