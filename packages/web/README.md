@@ -25,6 +25,13 @@ python export_movement.py --demo a b --merge pro-player   # several demos, one p
 Radar images live in `public/radar/`, copied from `assets/radar/`. Both are
 gitignored under `public/data/`; the radar PNGs are committed.
 
+`npm run build` deletes `dist/data` after Vite runs. Vite copies everything
+under `public/` into the build, and `public/data` is only there so `vite dev`
+serves payloads off the same URLs the Worker serves in production — shipping
+them in the bundle would upload megabytes of stale data shadowing the R2 route
+that answers for them. CI never had the files to begin with, so pruning is what
+makes a local deploy produce the same thing CI does.
+
 ## Layout
 
 | Path | Role |
