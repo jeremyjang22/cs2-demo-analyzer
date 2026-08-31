@@ -113,10 +113,9 @@ export default function Viewer({ demo, start }: Props) {
     return (
       <div className="fatal">
         <h1>Could not load {demo}</h1>
-        <p>{error}</p>
         <p className="muted">
-          Generate it with <code>python export_movement.py --demo {demo}</code>,
-          then publish it with <code>npm run upload-data</code>.
+          That demo is not available. It may have been unpublished, or the link
+          may be wrong.
         </p>
         <p><a className="back" href={HOME_HREF}>← All demos</a></p>
       </div>

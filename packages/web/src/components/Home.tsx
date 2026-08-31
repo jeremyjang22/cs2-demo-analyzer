@@ -62,14 +62,13 @@ export default function Home() {
         {error && <p className="home-empty">{error}</p>}
         {!error && demos === null && <p className="home-empty muted">Loading…</p>}
 
+        {/* Deliberately not a set of instructions. Demos are parsed and
+            published by whoever runs this, not by whoever visits it, and
+            printing the CLI here read as an invitation to add your own. */}
         {demos?.length === 0 && (
           <div className="home-empty">
             <p>No demos published yet.</p>
-            <p className="muted">
-              Parse one with <code>go run ./round-collector -demo &lt;file&gt;.dem</code>,
-              export it with <code>python export_movement.py --demo &lt;name&gt;</code>,
-              then publish with <code>npm run upload-data</code>.
-            </p>
+            <p className="muted">Check back once one has been.</p>
           </div>
         )}
 
@@ -92,8 +91,8 @@ export default function Home() {
       </section>
 
       <footer className="home-foot muted">
-        Demo data is parsed offline and published separately from the app — see{" "}
-        <code>docs/deployment.md</code>.
+        Demos are parsed from <code>.dem</code> files offline and published here
+        as read-only replays.
       </footer>
     </div>
   );
