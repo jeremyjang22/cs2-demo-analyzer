@@ -52,17 +52,32 @@ if (!demos.length) fail(`${dataRoot} holds no demos`);
 console.log(`${dryRun ? "would upload" : "uploading"} ${demos.length} demo(s) → r2://${bucket}\n`);
 
 let total = 0;
+const uploads = [];
+
 for (const demo of demos) {
   const file = join(dataRoot, demo, "movement.json");
-  const size = (await stat(file).catch(() => null))?.size;
-  if (size === undefined) {
+  if ((await stat(file).catch(() => null)) === null) {
     console.log(`  ${demo}: no movement.json, skipped`);
     continue;
   }
+  uploads.push([posix.join("data", demo, "movement.json"), file]);
+}
 
-  const key = posix.join("data", demo, "movement.json");
-  console.log(`  ${key}  ${(size / 1024).toFixed(0)} KB`);
+// The index is rebuilt and uploaded every time, even when only some demos were
+// named on the command line. It describes the whole bucket, so publishing a
+// payload beside a stale index leaves the home page listing something that is
+// gone - or hiding something that just arrived.
+{
+  const r = spawnSync("node", [join(here, "index-demos.mjs")],
+    { stdio: "inherit", shell: process.platform === "win32" });
+  if (r.status !== 0) fail("could not build the demo index");
+  uploads.push(["data/index.json", join(dataRoot, "index.json")]);
+}
+
+for (const [key, file] of uploads) {
+  const size = (await stat(file)).size;
   total += size;
+  console.log(`  ${key}  ${(size / 1024).toFixed(0)} KB`);
   if (dryRun) continue;
 
   // --remote targets the real bucket; without it wrangler writes to the local

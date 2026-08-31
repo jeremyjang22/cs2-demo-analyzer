@@ -10,8 +10,22 @@ npm install                        # once
 npm run dev                        # http://localhost:5173
 ```
 
-Pick a demo with `?demo=<folder name>`, e.g. `/?demo=nukepug`. Default is
-`anubispug`.
+`/` is the home page: it lists what has been published and offers Steam
+sign-in. A demo opens at `?demo=<folder name>`, e.g. `/?demo=nukepug`, with an
+optional `&t=<seconds>` to land on a moment.
+
+Routing is by query parameter rather than path, and that is forced rather than
+chosen: `base: "./"` makes every asset URL relative, so a page served at
+`/demo/nukepug` would ask for `/demo/assets/index.js` and get nothing. It also
+means every `?demo=` link shared before the home page existed still works.
+
+Sign-in needs the API. `npm run dev` proxies `/api/*` to `localhost:8080` —
+the same prefix the Worker proxies in production, so one relative URL works in
+both. To develop against a deployed API instead:
+
+```sh
+VITE_API_TARGET=https://<service>.code.run npm run dev
+```
 
 ## Getting data in
 
@@ -36,6 +50,8 @@ makes a local deploy produce the same thing CI does.
 
 | Path | Role |
 |---|---|
+| `src/route.ts` | which view the URL asks for — the whole router |
+| `src/api.ts` | the backend as this app sees it: `/me`, login, logout |
 | `src/types.ts` | payload shape, mirrors `export_movement.py` |
 | `src/radar.ts` | world → pixel transform, floor image names |
 | `src/track.ts` | pure sampling over a round's samples, including the loadout lookup |

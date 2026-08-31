@@ -317,3 +317,107 @@ ul.feed li.post { background: #1b1a18; opacity: .8; }
   padding: 1px 5px; border-radius: 4px; background: #3a3320;
   white-space: nowrap;
 }
+
+/* ---- home page ----------------------------------------------------------
+   body is a flex row for the viewer's panel + stage layout, and #root is
+   display:contents, so the home page is a flex child and has to claim the
+   width itself rather than relying on a block default. */
+.home {
+  flex: 1;
+  min-width: 0;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 8px 4px 40px;
+}
+
+.home-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+  padding-bottom: 22px;
+  margin-bottom: 26px;
+  border-bottom: 1px solid var(--line);
+}
+.home-title { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+.home-tag { color: var(--muted); font-size: 13px; margin: 6px 0 0; max-width: 52ch; }
+.home-h2 {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--muted); margin: 0 0 12px; font-weight: 500;
+}
+.home-foot { font-size: 11px; margin-top: 36px; }
+.home-empty { font-size: 13px; }
+.home-empty code, .home-foot code, .fatal code {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 4px; padding: 0.1em 0.35em; font-size: 0.9em;
+}
+
+/* ---- demo cards ---- */
+.demo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+}
+.demo-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 14px 15px;
+  background: var(--surface);
+  border: 1px solid var(--ring);
+  border-radius: 10px;
+  text-decoration: none;
+  color: var(--ink);
+  transition: border-color 120ms, background 120ms;
+}
+.demo-card:hover { border-color: var(--muted); background: #201f1d; }
+.demo-card:focus-visible { outline: 2px solid var(--ct); outline-offset: 2px; }
+.demo-map { font-size: 15px; font-weight: 600; }
+.demo-name {
+  font-size: 11px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.demo-meta {
+  display: flex; gap: 10px; margin-top: 7px;
+  font-size: 11px; color: var(--ink-2); font-variant-numeric: tabular-nums;
+}
+.demo-size {
+  position: absolute; top: 13px; right: 14px;
+  font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums;
+}
+
+/* ---- steam auth ---- */
+.auth { display: flex; align-items: center; gap: 9px; flex: none; }
+.steam-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 14px; border-radius: 7px;
+  background: #1b2838; color: #c7d5e0;
+  border: 1px solid #2a475e;
+  text-decoration: none; font-size: 13px; font-weight: 500;
+  transition: background 120ms, border-color 120ms;
+}
+.steam-btn:hover { background: #23384e; border-color: #3d6d99; color: #fff; }
+.steam-btn:focus-visible { outline: 2px solid var(--ct); outline-offset: 2px; }
+.auth-avatar { border-radius: 6px; display: block; }
+.auth-avatar-blank {
+  width: 32px; height: 32px; display: grid; place-items: center;
+  background: #1b2838; color: #66c0f4; border: 1px solid #2a475e;
+}
+.auth-who { display: flex; flex-direction: column; line-height: 1.25; }
+.auth-who a { color: var(--ink); text-decoration: none; font-size: 13px; }
+.auth-who a:hover { text-decoration: underline; }
+.auth-out {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  color: var(--muted); font: inherit; font-size: 11px; text-align: left;
+}
+.auth-out:hover { color: var(--ink-2); }
+.auth-down { color: var(--muted); font-size: 12px; }
+
+/* ---- back link, in the viewer panel and on the error page ---- */
+.back {
+  display: inline-block; margin-bottom: 10px;
+  color: var(--muted); text-decoration: none; font-size: 12px;
+}
+.back:hover { color: var(--ink); }
