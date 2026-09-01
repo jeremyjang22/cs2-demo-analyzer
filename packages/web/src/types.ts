@@ -351,7 +351,18 @@ export interface Payload {
   kits?: Record<string, KitEvent[]>;
   traj?: Record<string, TrajectoryEvent[]>;
   teams: Team[];
-  /** Cumulative K/D/A per steamid. */
+  /**
+   * Final K/D/A per steamid, for the whole match.
+   *
+   * No longer read by the viewer: the scoreboard accumulates its own numbers
+   * up to the current moment (see stats.ts), because a fixed final total
+   * cannot reorder and spoils the result from the opening round.
+   *
+   * Kept anyway. It is a documented part of the payload, it costs a few
+   * hundred bytes, and it is the obvious thing for a notebook or a future
+   * match-summary page to read rather than recomputing. Remove it only when
+   * something actually wants the space.
+   */
   stats: Record<string, PlayerStats>;
   players: Player[];
 }
