@@ -1,4 +1,5 @@
 import { ArmorIcon, BombIcon, KitIcon, NADE_ICONS, weaponIcon } from "./icons";
+import { byScoreboard, type LiveStat } from "../stats";
 import type { Loadout, Payload, Player, Team } from "../types";
 
 interface Props {
@@ -9,6 +10,8 @@ interface Props {
   alive: Set<string>;
   /** What each player is carrying right now. Empty in "Full round" mode. */
   equip: Map<string, Loadout>;
+  /** K/D/A and ADR as of the current moment, not for the whole match. */
+  stats: Map<string, LiveStat>;
   /**
    * Mirror the layout for the team on the right of the map, so both rosters
    * read outward from the centre the way a broadcast lays them out.
@@ -109,10 +112,13 @@ function Equipment({ loadout }: { loadout: Loadout }) {
  * map.
  */
 export default function TeamPanel({
-  team, payload, colors, selected, alive, equip, mirror = false, onToggle, onToggleTeam,
+  team, payload, colors, selected, alive, equip, stats, mirror = false,
+  onToggle, onToggleTeam,
 }: Props) {
   const byId = new Map(payload.players.map((p) => [p.id, p]));
-  const members = team.players
+  const nameOf = (id: string) => byId.get(id)?.name ?? id;
+  // Re-sorted every frame, so the board reorders itself as the match plays.
+  const members = byScoreboard(team.players, stats, nameOf)
     .map((id) => byId.get(id))
     .filter((p): p is Player => !!p);
 
@@ -131,7 +137,7 @@ export default function TeamPanel({
 
       <ul className="roster">
         {members.map((player) => {
-          const stats = payload.stats[player.id] ?? { k: 0, d: 0, a: 0 };
+          const stat = stats.get(player.id);
           const on = selected.includes(player.id);
           const isAlive = alive.has(player.id);
           const loadout = equip.get(player.id);
@@ -150,7 +156,10 @@ export default function TeamPanel({
                 />
                 <span className="pname">{player.name}</span>
                 <span className="pkd" title="kills / deaths / assists">
-                  {stats.k}<i>/</i>{stats.d}<i>/</i>{stats.a}
+                  {stat?.kills ?? 0}<i>/</i>{stat?.deaths ?? 0}<i>/</i>{stat?.assists ?? 0}
+                </span>
+                <span className="padr" title="average damage per round so far">
+                  {Math.round(stat?.adr ?? 0)}
                 </span>
               </div>
 

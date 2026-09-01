@@ -7,6 +7,7 @@ import Timeline from "./Timeline";
 import ViewControls from "./ViewControls";
 import { GAME_COLORS, MovementRenderer, SAFE_COLORS, type Summary, type ViewState } from "../renderer";
 import { HOME_HREF } from "../route";
+import { statsUpTo } from "../stats";
 import { isPostround, scoreBefore, stepRound } from "../timeline";
 import { assertPayload, type Payload } from "../types";
 
@@ -126,6 +127,9 @@ export default function Viewer({ demo, start }: Props) {
   const r = renderer.current;
   const chapter = summary.chapter;
   const timeline = { chapters: r?.chapters ?? [], duration: r?.matchDuration ?? 0 };
+  // Recomputed each frame so the board reorders as the match plays, rather
+  // than showing the final K/D from the opening round onward.
+  const liveStats = statsUpTo(payload, timeline.chapters, summary.t);
   const [sa, sb] = chapter ? scoreBefore(timeline, chapter) : [0, 0];
   const roundLabel = chapter ? `Round ${chapter.meta.n}` : "—";
   // Seconds past the win condition, plus why the round ended — the two facts
@@ -187,6 +191,7 @@ export default function Viewer({ demo, start }: Props) {
             selected={view.selected}
             alive={summary.alive}
             equip={summary.equip}
+            stats={liveStats}
             onToggle={toggle}
             onToggleTeam={toggleTeam}
           />
@@ -236,6 +241,7 @@ export default function Viewer({ demo, start }: Props) {
               selected={view.selected}
               alive={summary.alive}
               equip={summary.equip}
+              stats={liveStats}
               mirror
               onToggle={toggle}
               onToggleTeam={toggleTeam}

@@ -14,7 +14,7 @@ const bomb = (t: number, st: BombEvent["st"], over: Partial<BombEvent> = {}): Bo
 });
 
 const hit = (t: number, victim: string, hp: number): DamageEvent => ({
-  t, v: victim, by: "9", k: "bullet", hp, ar: 0, hg: 2, n: 1, x: 0, y: 0, lv: 0,
+  t, v: victim, by: "9", k: "bullet", hp, hpt: hp, ar: 0, hg: 2, n: 1, x: 0, y: 0, lv: 0,
 });
 
 describe("fadingAt", () => {

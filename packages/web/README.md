@@ -51,6 +51,7 @@ makes a local deploy produce the same thing CI does.
 | Path | Role |
 |---|---|
 | `src/route.ts` | which view the URL asks for — the whole router |
+| `src/stats.ts` | K/D/A and ADR as of a moment, and the scoreboard order |
 | `src/api.ts` | the backend as this app sees it: `/me`, login, logout |
 | `src/types.ts` | payload shape, mirrors `export_movement.py` |
 | `src/radar.ts` | world → pixel transform, floor image names |
@@ -98,6 +99,12 @@ Beyond player dots, cones and utility:
   in player colours — ten coloured crosses would compete with ten coloured
   dots, and the question a death map answers is about the shape of the set.
   Read off the tracks: a track that ends in a death ends at the death.
+
+The scoreboard is **live**: K/D/A and ADR are accumulated up to wherever the
+clock is, not taken from the payload's final totals, and each team re-sorts by
+kills as the match plays. ADR is built from damage the victim actually lost —
+raw damage includes the over-damage of every killing blow and puts the
+reference Anubis demo's mean at 103.6, which no player has ever posted.
 - **Bullet tracers** for 0.35s, coloured by shooter. A tracer that ends in a dot
   hit somebody; one that fades out hit nothing we can locate — a demo only
   records where a shot stopped when it damaged a player, so the fade is the

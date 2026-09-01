@@ -222,6 +222,12 @@ export interface DamageEvent {
   k: "bullet" | "he" | "fire" | "impact" | "bomb" | "fall" | "knife" | "zeus" | "other";
   /** Raw health damage, which can exceed what the victim had left. */
   hp: number;
+  /**
+   * Health the victim actually lost — raw damage minus the over-damage a
+   * killing blow produces. This is the one to average; `hp` is the one to
+   * show on a marker, because it is what the weapon did.
+   */
+  hpt: number;
   ar: number;
   /** Hit group: 1 head, 2 chest, 3 stomach, 4/5 arms, 6/7 legs, 8 neck, 0 generic. */
   hg: number;

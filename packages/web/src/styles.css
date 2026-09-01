@@ -484,3 +484,11 @@ ul.feed li.post { background: #1b1a18; opacity: .8; }
   .team.mirror .nades { margin-left: auto; }
   .roster { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); }
 }
+
+/* ADR sits beside K/D/A: it is the second thing a scoreboard is read for, and
+   the tiebreak the rows are sorted on when kills are level. */
+.padr {
+  font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums;
+  flex: none; min-width: 20px; text-align: right;
+}
+.team.mirror .padr { text-align: left; }

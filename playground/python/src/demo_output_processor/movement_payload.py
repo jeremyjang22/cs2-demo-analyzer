@@ -320,13 +320,35 @@ def damage_events(damage: pd.DataFrame, base: int, tick_rate: float, span: float
     over-damage is deliberate - a 5 HP player hit for 502 by the bomb took a
     502-damage hit - and a viewer showing "502" over a corpse is showing what
     happened.
+
+    `hpt` is what the victim actually LOST, which is what any average has to be
+    built from. It is derived here rather than read from the parser: demoinfocs
+    exposes a HealthDamageTaken, but for a shotgun it reports the whole health
+    drop on more than one of the pellets that caused it, so summing it double
+    counts - one XM1014 player in the reference Anubis demo came out at 110.9
+    ADR against a raw figure of 102.3, which is not even possible.
+
+    Tracking `health_remaining` per victim gives the exact answer: the health
+    lost to a hit is the difference between the reading before it and after.
+    Raw damage puts that demo's mean ADR at 103.6, a figure no player has ever
+    posted; this puts it at 80.9.
     """
     merged = {}
     order = []
-    for r in damage.itertuples():
+    # Everyone starts a round at full health. Sorted by tick because a running
+    # health reading is meaningless out of order.
+    remaining = {}
+
+    for r in damage.sort_values("tick").itertuples():
         t = (r.tick - base) / tick_rate
         if t < 0 or t > span:
             continue
+        # How much health this hit actually removed. max(0, ...) because a
+        # health shot can raise it, and a negative "damage" helps nobody.
+        before = remaining.get(r.victim_steamid, 100)
+        actual = max(0, before - int(r.health_remaining))
+        remaining[r.victim_steamid] = int(r.health_remaining)
+
         # Keyed on the raw tick, not the rounded time: two hits 10 ms apart are
         # the same tick at 64 Hz and would merge either way, but keying on a
         # rounded float invites the reverse mistake.
@@ -339,6 +361,7 @@ def damage_events(damage: pd.DataFrame, base: int, tick_rate: float, span: float
                 "by": str(r.attacker_steamid) if r.attacker_steamid else None,
                 "k": r.kind,
                 "hp": int(r.health_damage),
+                "hpt": actual,
                 "ar": int(r.armor_damage),
                 # The hitgroup of the biggest component. A blast that clips a
                 # leg and a head is a headshot as far as a reader is concerned.
@@ -354,6 +377,7 @@ def damage_events(damage: pd.DataFrame, base: int, tick_rate: float, span: float
         if r.health_damage > hit["hp"]:
             hit["hg"] = int(r.hitgroup)
         hit["hp"] += int(r.health_damage)
+        hit["hpt"] += actual
         hit["ar"] += int(r.armor_damage)
         hit["n"] += 1
 
