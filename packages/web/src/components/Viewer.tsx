@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import BombStatus from "./BombStatus";
 import KillFeed from "./KillFeed";
 import PlaybackBar from "./PlaybackBar";
-import Scoreboard from "./Scoreboard";
-import Segmented from "./Segmented";
+import TeamPanel from "./TeamPanel";
 import Timeline from "./Timeline";
+import ViewControls from "./ViewControls";
 import { GAME_COLORS, MovementRenderer, SAFE_COLORS, type Summary, type ViewState } from "../renderer";
 import { HOME_HREF } from "../route";
 import { isPostround, scoreBefore, stepRound } from "../timeline";
@@ -152,27 +152,36 @@ export default function Viewer({ demo, start }: Props) {
   };
 
   return (
-    <>
-      <aside className="panel">
-        <a className="back" href={HOME_HREF}>← All demos</a>
-        <h1>{payload.map}</h1>
-        <div className="sub">
-          {demo} · {Object.keys(payload.rounds).length} rounds ·{" "}
-          {payload.players.length} players
+    <div className="bcast">
+      <header className="bcast-top">
+        <div className="bcast-id">
+          <a className="back" href={HOME_HREF}>← All demos</a>
+          <span className="bcast-map">{payload.map}</span>
+          <span className="bcast-demo">{demo}</span>
         </div>
 
-        <div className="livescore">
-          <span className="ls-name">{payload.teams[0]?.name}</span>
-          <b>{sa}</b><span className="vs">–</span><b>{sb}</b>
-          <span className="ls-name r">{payload.teams[1]?.name}</span>
-        </div>
-        <div className="hint" style={{ marginTop: 0 }}>
-          Score entering {roundLabel.toLowerCase()}.
+        {/* The score reads outward from the centre, each team's number on its
+            own side, so it matches which side of the map that team is on. */}
+        <div className="bcast-score">
+          <span className="bs-team left">{payload.teams[0]?.name}</span>
+          <b>{sa}</b>
+          <span className="bs-round">
+            {roundLabel}
+            {postround && <span className="tpost">{postround}</span>}
+          </span>
+          <b>{sb}</b>
+          <span className="bs-team right">{payload.teams[1]?.name}</span>
         </div>
 
-        <fieldset>
-          <legend>Scoreboard</legend>
-          <Scoreboard
+        <div className="bcast-bomb">
+          <BombStatus bomb={summary.bomb} names={names} />
+        </div>
+      </header>
+
+      <div className="bcast-body">
+        {payload.teams[0] && (
+          <TeamPanel
+            team={payload.teams[0]}
             payload={payload}
             colors={colors}
             selected={view.selected}
@@ -181,126 +190,64 @@ export default function Viewer({ demo, start }: Props) {
             onToggle={toggle}
             onToggleTeam={toggleTeam}
           />
-          <div className="hint">
-            Click a row to hide it on the map. Dimmed = dead right now. The
-            second line is what they are carrying at this moment.
-          </div>
-        </fieldset>
+        )}
 
-        <fieldset>
-          <legend>Kill feed — {roundLabel}</legend>
-          <KillFeed kills={summary.kills} names={names} colors={colors} teamOf={teamOf} />
-        </fieldset>
+        <main className="bcast-stage">
+          <div className="stage" ref={stage} />
 
-        <fieldset>
-          <legend>View</legend>
-          <Segmented
-            options={[
-              { value: "dots", label: "Live" },
-              { value: "trail", label: "Trails" },
-              { value: "full", label: "Full round" },
-            ]}
-            value={view.mode}
-            onChange={(mode) => patch({ mode })}
+          <PlaybackBar
+            playing={playing}
+            speed={speed}
+            t={summary.t}
+            duration={timeline.duration}
+            roundLabel={roundLabel}
+            postround={postround}
+            onToggle={() => {
+              if (!r) return;
+              if (r.playing) { r.pause(); setPlaying(false); }
+              else { r.play(); setPlaying(true); }
+            }}
+            onNudge={(d) => r?.nudge(d)}
+            onRound={(d) => { if (r) seek(stepRound(timeline, r.time, d)); }}
+            onEdge={(which) => seek(which === "start" ? 0 : timeline.duration)}
+            onSpeed={(f) => { setSpeed(f); r?.setSpeed(f); }}
           />
-          <div style={{ marginTop: 4 }}>
-            <Segmented
-              options={[{ value: "on", label: "Cones" }, { value: "off", label: "No cones" }]}
-              value={view.cones ? "on" : "off"}
-              onChange={(v) => patch({ cones: v === "on" })}
-            />
-          </div>
-          <div style={{ marginTop: 4 }}>
-            <Segmented
-              options={[{ value: "on", label: "Utility" }, { value: "off", label: "No utility" }]}
-              value={view.util ? "on" : "off"}
-              onChange={(v) => patch({ util: v === "on" })}
-            />
-          </div>
-          <div style={{ marginTop: 4 }}>
-            <Segmented
-              options={[{ value: "on", label: "Names" }, { value: "off", label: "No names" }]}
-              value={view.labels ? "on" : "off"}
-              onChange={(v) => patch({ labels: v === "on" })}
-            />
-          </div>
-          <div style={{ marginTop: 4 }}>
-            <Segmented
-              options={[{ value: "on", label: "Fire" }, { value: "off", label: "No fire" }]}
-              value={view.fire ? "on" : "off"}
-              onChange={(v) => patch({ fire: v === "on" })}
-            />
-          </div>
-          <div style={{ marginTop: 4 }}>
-            <Segmented
-              options={[{ value: "on", label: "Bomb" }, { value: "off", label: "No bomb" }]}
-              value={view.bomb ? "on" : "off"}
-              onChange={(v) => patch({ bomb: v === "on" })}
-            />
-          </div>
-          <div style={{ marginTop: 4 }}>
-            <Segmented
-              options={[{ value: "on", label: "Deaths" }, { value: "off", label: "No deaths" }]}
-              value={view.deaths ? "on" : "off"}
-              onChange={(v) => patch({ deaths: v === "on" })}
-            />
-          </div>
-          <div className="hint">
-            Fire draws bullet tracers and the damage they landed; a tracer
-            that fades out hit no one, because the demo only records where a
-            shot stopped when it hurt somebody. Utility includes grenade
-            flight paths. Deaths marks where each player fell this round.
-          </div>
-        </fieldset>
 
-        <fieldset>
-          <legend>Bomb</legend>
-          <BombStatus bomb={summary.bomb} names={names} />
-        </fieldset>
-
-        <fieldset>
-          <legend>Colours</legend>
-          <Segmented
-            options={[{ value: "game", label: "Game" }, { value: "safe", label: "Accessible" }]}
-            value={view.palette}
-            onChange={(palette) => patch({ palette })}
+          <Timeline
+            chapters={timeline.chapters}
+            duration={timeline.duration}
+            t={summary.t}
+            current={chapter}
+            onSeek={seek}
           />
-          <div className="hint">
-            Game = the five minimap colours; not colourblind-safe, which is what
-            the accessible set is for.
+
+          <ViewControls view={view} patch={patch} />
+        </main>
+
+        {/* The feed shares the right column with the team above it: that is
+            where a broadcast puts it, and it is the only column with room
+            once a roster has thinned out. */}
+        <div className="bcast-side">
+          {payload.teams[1] && (
+            <TeamPanel
+              team={payload.teams[1]}
+              payload={payload}
+              colors={colors}
+              selected={view.selected}
+              alive={summary.alive}
+              equip={summary.equip}
+              mirror
+              onToggle={toggle}
+              onToggleTeam={toggleTeam}
+            />
+          )}
+
+          <div className="bcast-feed">
+            <h2 className="feed-h">Kill feed</h2>
+            <KillFeed kills={summary.kills} names={names} colors={colors} teamOf={teamOf} />
           </div>
-        </fieldset>
-      </aside>
-
-      <main className="viewer">
-        <div className="stage" ref={stage} />
-
-        <PlaybackBar
-          playing={playing}
-          speed={speed}
-          t={summary.t}
-          duration={timeline.duration}
-          roundLabel={roundLabel}
-          postround={postround}
-          onToggle={() => {
-            if (!r) return;
-            if (r.playing) { r.pause(); setPlaying(false); }
-            else { r.play(); setPlaying(true); }
-          }}
-          onNudge={(d) => r?.nudge(d)}
-          onRound={(d) => { if (r) seek(stepRound(timeline, r.time, d)); }}
-          onEdge={(which) => seek(which === "start" ? 0 : timeline.duration)}
-          onSpeed={(f) => { setSpeed(f); r?.setSpeed(f); }}
-        />
-
-        <Timeline
-          chapters={timeline.chapters}
-          duration={timeline.duration}
-          t={summary.t}
-          current={chapter}
-          onSeek={seek}
-        />
-      </main>
-    </>
+        </div>
+      </div>
+    </div>
   );
 }

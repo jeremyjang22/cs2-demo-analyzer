@@ -26,39 +26,9 @@ body {
 
 #root { display: contents; }
 
-.panel {
-  width: 300px;
-  flex: none;
-  background: var(--surface);
-  border: 1px solid var(--ring);
-  border-radius: 10px;
-  padding: 16px;
-  max-height: calc(100vh - 36px);
-  overflow-y: auto;
-}
-
 h1 { font-size: 15px; margin: 0; }
 .sub { color: var(--muted); font-size: 12px; margin: 2px 0 14px; }
 .muted { color: var(--muted); }
-
-fieldset { border: 0; padding: 0; margin: 0 0 14px; }
-legend {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--muted);
-  padding: 0;
-  margin-bottom: 7px;
-}
-
-label.row { display: flex; align-items: center; gap: 8px; padding: 2px 0; cursor: pointer; }
-label.row.off { opacity: 0.35; cursor: not-allowed; }
-label.row .count { margin-left: auto; color: var(--muted); font-size: 11px; }
-
-.swatch {
-  width: 11px; height: 11px; border-radius: 3px; flex: none;
-  border: 1px solid var(--ring);
-}
 
 .seg { display: flex; gap: 4px; flex-wrap: wrap; }
 .seg button, .pp {
@@ -83,28 +53,6 @@ input:focus-visible { outline: 2px solid var(--ct); outline-offset: 2px; }
 
 input[type="range"] { width: 100%; accent-color: var(--ct); }
 
-.score { display: flex; align-items: baseline; gap: 8px; font-variant-numeric: tabular-nums; }
-.score b { font-size: 26px; font-weight: 600; }
-.score .vs { color: var(--muted); font-size: 13px; }
-
-.chips { display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; margin-top: 6px; }
-.chips button {
-  padding: 3px 0;
-  font-size: 11px;
-  border-radius: 4px;
-  border: 1px solid var(--line);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  font-variant-numeric: tabular-nums;
-  font-family: inherit;
-}
-.chips button[aria-pressed="true"] { color: var(--ink); border-color: var(--muted); background: #2c2c2a; }
-.chips button.t[aria-pressed="true"] { border-color: var(--t); }
-.chips button.ct[aria-pressed="true"] { border-color: var(--ct); }
-
-.play { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-.play .clock { font-variant-numeric: tabular-nums; font-size: 22px; min-width: 62px; }
 .pp { width: 38px; height: 32px; font-size: 14px; }
 
 table { border-collapse: collapse; width: 100%; font-size: 12px; }
@@ -117,7 +65,6 @@ th, td {
 }
 th { color: var(--muted); position: sticky; top: 0; background: var(--surface); }
 td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
-.scroll { max-height: 190px; overflow-y: auto; }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
 
 .hint { color: var(--muted); font-size: 11px; margin-top: 5px; }
@@ -156,31 +103,6 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* ---- viewer column: map, transport, timeline ---- */
 .viewer { display: flex; flex-direction: column; gap: 10px; }
-
-/* ---- live score ---- */
-.livescore {
-  display: flex; align-items: baseline; gap: 8px;
-  font-variant-numeric: tabular-nums; margin-bottom: 2px;
-}
-.livescore b { font-size: 28px; font-weight: 600; }
-.livescore .vs { color: var(--muted); }
-.ls-name { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-2); }
-.ls-name.r { margin-left: auto; }
-
-/* ---- scoreboard ---- */
-table.board { margin-bottom: 10px; }
-table.board tbody tr { cursor: pointer; }
-table.board tbody tr:hover td { background: #22221f; }
-table.board td.who { display: flex; align-items: center; gap: 7px; }
-table.board .pip { width: 10px; height: 10px; border-radius: 3px; flex: none; }
-table.board .pname { overflow: hidden; text-overflow: ellipsis; }
-table.board tr.hidden-row { opacity: .38; }
-table.board tr.dead-row .pname { text-decoration: line-through; color: var(--muted); }
-.team-btn {
-  background: none; border: 0; padding: 0; cursor: pointer; font: inherit;
-  color: var(--muted); text-transform: uppercase; letter-spacing: .07em; font-size: 11px;
-}
-.team-btn:hover { color: var(--ink); }
 
 /* ---- kill feed ---- */
 ul.feed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
@@ -238,7 +160,6 @@ ul.feed li {
 }
 
 /* ---- health, cash and equipment, under the name in the scoreboard ---- */
-table.board td.who { flex-wrap: wrap; }
 
 .hp { display: flex; align-items: center; gap: 4px; margin-left: auto; }
 .hp-bar {
@@ -421,3 +342,145 @@ ul.feed li.post { background: #1b1a18; opacity: .8; }
   color: var(--muted); text-decoration: none; font-size: 12px;
 }
 .back:hover { color: var(--ink); }
+
+/* ================= broadcast layout ==================================
+   Teams either side of the map, the way a broadcast lays them out: five rows
+   on one side and three on the other tells you the state of the round without
+   reading a word. body is a flex row (it predates this), so the shell claims
+   the width itself. */
+.bcast {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ---- header: identity, score, bomb ---- */
+.bcast-top {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.bcast-id { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.bcast-id .back { margin-bottom: 0; }
+.bcast-map { font-size: 15px; font-weight: 600; }
+.bcast-demo {
+  font-size: 11px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.bcast-score {
+  display: flex; align-items: center; gap: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.bcast-score b { font-size: 30px; font-weight: 600; line-height: 1; }
+.bs-team {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--ink-2); max-width: 15ch;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bs-round {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  font-size: 11px; color: var(--muted); min-width: 92px;
+}
+.bcast-bomb { justify-self: end; min-width: 0; }
+.bcast-bomb .hint { margin: 0; }
+
+/* ---- body: team | stage | team ---- */
+.bcast-body {
+  display: grid;
+  grid-template-columns: 236px auto 236px;
+  gap: 14px;
+  align-items: start;
+  justify-content: center;
+}
+.bcast-stage { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+
+/* ---- a team column ---- */
+.team { min-width: 0; }
+.team-head {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 0 2px 6px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 7px;
+}
+.team.mirror .team-head { flex-direction: row-reverse; }
+.team-alive {
+  margin-left: auto; font-size: 13px; font-weight: 600;
+  color: var(--ink); font-variant-numeric: tabular-nums;
+}
+.team.mirror .team-alive { margin-left: 0; margin-right: auto; }
+
+.roster { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.pcard {
+  padding: 7px 9px;
+  background: var(--surface);
+  border: 1px solid var(--ring);
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.pcard:hover { border-color: var(--muted); }
+.pcard.hidden-row { opacity: .38; }
+.pcard.dead-row { background: #171614; }
+.pcard.dead-row .pname { text-decoration: line-through; color: var(--muted); }
+
+.pcard-top { display: flex; align-items: center; gap: 7px; }
+.pcard .pip { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+.pcard .pname {
+  font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pkd {
+  margin-left: auto; font-size: 11px; color: var(--ink-2);
+  font-variant-numeric: tabular-nums; flex: none;
+}
+.pkd i { color: var(--muted); font-style: normal; margin: 0 1px; }
+
+.pcard-mid { display: flex; align-items: center; gap: 8px; }
+
+/* Mirrored side reads outward from the map. */
+.team.mirror .pcard-top { flex-direction: row-reverse; }
+.team.mirror .pkd { margin-left: 0; margin-right: auto; }
+.team.mirror .pcard-mid,
+.team.mirror .kit { flex-direction: row-reverse; }
+.team.mirror .hp { margin-left: 0; margin-right: auto; }
+.team.mirror .cash { margin-left: 0; margin-right: 6px; }
+.team.mirror .nades { margin-left: 0; margin-right: auto; }
+.team.mirror .guns { flex-direction: row-reverse; }
+
+/* ---- control strip under the map ---- */
+.controls {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding-top: 2px;
+}
+.controls-sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 3px; }
+
+/* ---- kill feed, in the right column under its team ---- */
+.bcast-side { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.bcast-feed { min-width: 0; }
+.bcast-feed ul.feed li { font-size: 11px; padding: 3px 6px; }
+.feed-h {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--muted); margin: 0 0 7px; font-weight: 500;
+}
+
+/* Narrow: the map keeps its size, so the teams go under it rather than
+   squeezing it into something unreadable. */
+@media (max-width: 1450px) {
+  .bcast-body { grid-template-columns: 1fr; justify-items: center; }
+  .bcast-side { width: 100%; max-width: 900px; }
+  .team { width: 100%; max-width: 900px; }
+  .team.mirror .pcard-top,
+  .team.mirror .pcard-mid,
+  .team.mirror .kit,
+  .team.mirror .guns,
+  .team.mirror .team-head { flex-direction: row; }
+  .team.mirror .team-alive { margin-left: auto; margin-right: 0; }
+  .team.mirror .hp { margin-left: 0; }
+  .team.mirror .nades { margin-left: auto; }
+  .roster { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); }
+}
