@@ -28,3 +28,6 @@ Thumbs.db
 # round-collector output
 packages/out/
 out/
+
+# scripts/dev.sh builds the api here so it has a pid it can stop
+.dev/

@@ -35,15 +35,22 @@ going back to the demo.
 ## Running
 
 ```sh
+# the whole site on localhost: api on :8080, web on :5173
+./scripts/dev.sh
+./scripts/dev.sh --web-only     # no database needed
+
 # parse a demo
 cd packages && go run ./round-collector -demo ../data/foo.dem -out ../out
 
 # tests
 go test ./...
-
-# the viewer
-cd packages/web && npm install && npm run dev
 ```
+
+`scripts/dev.sh` runs the api and the web app together and proxies `/api` from
+one to the other, which is what the Cloudflare Worker does in production — so
+Steam sign-in behaves locally the way it will when deployed. `npm run dev` in
+`packages/web` still works on its own; sign-in just reports itself
+unavailable.
 
 Output schema and its traps are documented in
 [`docs/round-collector-schema.md`](../docs/round-collector-schema.md). Read the
