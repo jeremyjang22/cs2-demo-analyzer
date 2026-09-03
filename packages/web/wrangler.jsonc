@@ -27,6 +27,6 @@
   "vars": {
     // The Northflank service URL. Not a secret — it is a public hostname, and
     // keeping it here means the value that shipped is visible in the diff.
-    "API_ORIGIN": "https://p01--runner--vhddqzfzn725.code.run"
+    "API_ORIGIN": "https://p01--api--vhddqzfzn725.code.run"
   }
 }
