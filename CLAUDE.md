@@ -17,7 +17,7 @@ smaller readable one, in stages, and each stage writes its result to disk.**
 data/foo.dem            670 MB   the recording CS2 made
    │  round-collector (Go)
    ▼
-out/foo/                 18 MB   9 CSV files: every player, every tick
+out/foo/                 19 MB   11 CSVs + manifest.json (ticks.csv is gzipped)
    │  export_movement.py (Python)
    ▼
 public/data/foo/         1.2 MB  movement.json, resampled to 4 samples/second
@@ -25,6 +25,11 @@ public/data/foo/         1.2 MB  movement.json, resampled to 4 samples/second
    ▼
 packages/web                     the page that draws it
 ```
+
+Every output directory carries a `manifest.json` beside the CSVs holding the
+schema version, a row count per table, and the full column list of each — read
+it first when you are unsure what a run produced, rather than opening a 19 MB
+CSV. Note that `ticks.csv` is written **gzipped**, so it is `zcat`, not `head`.
 
 **The one rule: Go writes files, and nothing calls back.** The parser does not
 know the website exists. The website never opens a `.dem`. Every arrow above is
@@ -63,14 +68,19 @@ go test ./collector/ -run TestName
 go vet ./...
 gofmt -l .                       # lists unformatted files; should print nothing
 
-# --- parse a demo into CSVs
+# --- parse a demo into CSVs (a full match takes a few minutes)
 cd packages
 go run ./round-collector -demo ../data/foo.dem -out ../out
+go run ./round-collector -demo ../data/foo.dem -out ../out -max-rounds 2
+                                 # ^ two rounds, for when you are iterating
 
 # --- turn those CSVs into what the web app reads
-cd playground/python/src/demo_output_processor
+cd playground/python && uv sync          # one-time after clone
+cd src/demo_output_processor
 ./venv/Scripts/python.exe export_movement.py --demo foo     # Windows
 python export_movement.py --demo foo                        # elsewhere
+# --hz changes the sample rate (default 4), --out the destination,
+# --merge combines several demos into one payload.
 
 # --- web
 cd packages/web
@@ -78,11 +88,19 @@ npm test                         # vitest
 npm run typecheck                # app + Cloudflare Worker
 npm run build                    # typecheck + bundle
 npm run upload-data              # publish demo payloads to R2 (needs wrangler login)
+npm run deploy                   # build + wrangler deploy, if you ever need to
+                                 # bypass CI; normally main does this for you
+
+# `dev` and `build` both run `radar` and `index-demos` first. Those regenerate
+# the map images and the demo list from what is on disk, so a demo you just
+# exported shows up on its own — you do not run them by hand.
 
 # --- database migrations (see packages/api/README.md first)
 cd packages/api
+cp .env.example .env             # then fill in; see the note below on which URL
 ./migrate.sh migrate diff <name>
 ./migrate.sh migrate apply
+./migrate.ps1 migrate apply      # same thing from PowerShell
 ```
 
 ## How the pieces fit together in production
@@ -125,10 +143,28 @@ deployed site gets the new code immediately but keeps the old data until you
 run `npm run upload-data`. Make new fields optional in `types.ts` so an old
 payload degrades instead of crashing.
 
+**Neon gives you two connection strings; migrations need the direct one.**
+The pooled URL is the one to use at runtime, but Atlas needs a real session to
+diff a schema and will fail confusingly against the pooler. `DATABASE_DEV_URL`
+is a separate throwaway database that Atlas drops and recreates on every diff —
+never point it at the real one. `packages/api/.env.example` says which is which.
+
 **Don't `source` the `.env` file in a shell script.** Neon connection strings
 contain `&`, which the shell reads as "run this in the background" — the
 variable silently ends up empty. Parse the file line by line instead;
 `scripts/dev.sh` shows how.
+
+**Routing is by query parameter, and has to stay that way.** `vite.config.ts`
+sets `base: "./"`, so every asset URL is relative. A page served at
+`/demo/anubispug` would ask for `/demo/assets/index.js` and get a 404, so the
+path stays at the root and the view is chosen by `?demo=`. Adding a path route
+breaks asset loading, not routing, which makes it a confusing failure. The
+reasoning is written at the top of `route.ts`.
+
+**A local `npm run build` will ship data that CI does not.** `dist/data` picks
+up whatever demos are in `public/data` on your machine — megabytes of payloads
+that are supposed to come from R2 instead. `prune-data` runs at the end of
+`build` to delete it. If you restructure the build, keep that step.
 
 **The parser library reports entity lifetime, not motion.** Three separate
 features hit this. Events fire when a thing is created or destroyed, so if you
@@ -152,8 +188,9 @@ statistic, compare it to a number you already know.
 - **Comments explain why, not what.** The code says what it does. Comments
   exist for the decision behind it, especially where the obvious approach was
   tried and failed. Most comments here name a specific failure.
-- **Schema changes are additive.** `major.minor`; appending a column bumps the
-  minor and old readers keep working. If a change alters the *meaning* of an
+- **Schema changes are additive.** Currently `1.6`, recorded in every
+  `manifest.json`. Appending a column bumps the minor and old readers keep
+  working; changing what an existing column means is a major bump. If a change alters the *meaning* of an
   existing value rather than adding a new one, say so loudly in the docs.
 - **Say what is measured and what is inferred.** `kits.csv` is reconstructed,
   not observed, and is documented as such. In six months an inference is
