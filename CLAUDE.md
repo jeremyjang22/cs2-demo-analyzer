@@ -43,6 +43,8 @@ notebook.
 |---|---|
 | `packages/collector/` | Go. Reads a `.dem`, writes CSVs. The parsing core. |
 | `packages/round-collector/` | Go. Command-line wrapper around the collector. |
+| `packages/analytics/` | Go. Match statistics from one demo or many: weapon kills, opening kills, clutches, X-vs-Y conversion. |
+| `packages/demo-analytics/` | Go. Command-line wrapper around analytics. |
 | `packages/api/` | Go. Small HTTP server: Steam login. Talks to Postgres. |
 | `packages/web/` | TypeScript + React. The viewer and the home page. |
 | `playground/python/…/demo_output_processor/` | Python. Turns CSVs into `movement.json`. |
@@ -73,6 +75,17 @@ cd packages
 go run ./round-collector -demo ../data/foo.dem -out ../out
 go run ./round-collector -demo ../data/foo.dem -out ../out -max-rounds 2
                                  # ^ two rounds, for when you are iterating
+
+# --- match statistics, by player and by team (see docs/demo-analytics.md)
+cd packages
+go run ./demo-analytics ../out                  # every parsed demo, instantly
+go run ./demo-analytics -team "us=name,name,steamid" ../out
+                                 # ^ follow one team across demos; the list is
+                                 #   a player pool, not a fixed five
+go run ./demo-analytics ../data/a.dem ../data/b.dem   # or straight from .dem
+go run ./demo-analytics -web web/public/data ../out
+                                 # ^ also writes each demo's analytics.json for
+                                 #   the web app's ?demo=<name>&view=analytics page
 
 # --- turn those CSVs into what the web app reads
 cd playground/python && uv sync          # one-time after clone

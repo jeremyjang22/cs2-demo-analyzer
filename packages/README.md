@@ -7,6 +7,8 @@ something else depends on it.
 |---|---|---|
 | `collector/` | Go | `.dem` → rounds, ticks, kills, utility, shots, damage, bomb, kits. The parsing core. |
 | `round-collector/` | Go | CLI wrapper around `collector`. |
+| `analytics/` | Go | Parsed output (or a `.dem`) → weapon kills, opening kills, clutches and X-vs-Y conversion, per player and per team, over any number of demos. See [`docs/demo-analytics.md`](../docs/demo-analytics.md). |
+| `demo-analytics/` | Go | CLI wrapper around `analytics`. |
 | `web/` | TypeScript | Demo viewer. Reads `movement.json`; draws nothing itself from a `.dem`. |
 
 ## The seam
