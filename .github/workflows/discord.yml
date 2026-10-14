@@ -1,0 +1,37 @@
+# Posts to a Discord channel when work lands on main, and again when a deploy
+# finishes - so the channel reads as a log of what changed and whether it
+# shipped. The message is built by .github/scripts/discord_notify.py.
+#
+# Needs one repository secret, DISCORD_WEBHOOK_URL: in Discord, Channel
+# settings → Integrations → Webhooks → New Webhook → Copy Webhook URL; then on
+# GitHub, Settings → Secrets and variables → Actions → New repository secret.
+# Without it every run is a quiet no-op rather than a red X.
+name: discord
+
+on:
+  push:
+    branches: [main]
+  # workflow_run only ever fires for workflows on the default branch, which is
+  # exactly the set that deploys.
+  workflow_run:
+    workflows: [deploy-web, deploy-api]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    env:
+      # Secrets cannot be tested in an `if:` directly; an env var can.
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        if: env.DISCORD_WEBHOOK_URL != ''
+        with:
+          sparse-checkout: .github/scripts
+
+      - name: post to Discord
+        if: env.DISCORD_WEBHOOK_URL != ''
+        run: python3 .github/scripts/discord_notify.py
