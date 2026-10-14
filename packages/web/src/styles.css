@@ -492,3 +492,179 @@ ul.feed li.post { background: #1b1a18; opacity: .8; }
   flex: none; min-width: 20px; text-align: right;
 }
 .team.mirror .padr { text-align: left; }
+
+/* ---- replay / analytics switch, in the header beside the demo name ---- */
+.view-tabs { display: flex; gap: 4px; margin-left: 6px; flex: none; }
+.view-tabs a {
+  padding: 3px 9px; font-size: 12px; text-decoration: none;
+  color: var(--ink-2); border: 1px solid var(--line); border-radius: 6px;
+}
+.view-tabs a[href]:hover { border-color: var(--muted); color: var(--ink); }
+.view-tabs a[aria-current="page"] {
+  background: #2c2c2a; color: var(--ink); border-color: var(--muted);
+}
+
+/* ================= analytics page ====================================
+   body is a flex row (see .home), so this claims the width itself. */
+.an {
+  flex: 1; min-width: 0; max-width: 1280px; margin: 0 auto;
+  display: flex; flex-direction: column; gap: 14px; padding-bottom: 40px;
+}
+.an-filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.an-chip {
+  padding: 5px 9px; font: inherit; font-size: 12px; cursor: pointer;
+  background: #2c2c2a; color: var(--ink);
+  border: 1px solid var(--muted); border-radius: 6px;
+}
+
+.an-tiles {
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+.an-tile {
+  display: flex; flex-direction: column; gap: 1px; padding: 12px 14px;
+  background: var(--surface); border: 1px solid var(--ring); border-radius: 10px;
+}
+.an-tile-l {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted);
+}
+.an-tile-v { font-size: 28px; font-weight: 600; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.an-tile-s { font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+.an-cols {
+  display: grid; gap: 14px; align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+}
+.an-card {
+  min-width: 0; padding: 14px 15px; overflow-x: auto;
+  background: var(--surface); border: 1px solid var(--ring); border-radius: 10px;
+}
+.an-card .hint { margin: 0 0 10px; }
+
+.an-table td, .an-table th { padding: 4px 12px 4px 0; }
+.an-table td { color: var(--ink); }
+.an-table td.muted { color: var(--muted); }
+.an-table tbody tr { border-top: 1px solid var(--line); }
+.an-pick { cursor: pointer; }
+.an-pick:hover td { background: #201f1d; }
+.an-pick.on td { background: #2c2c2a; }
+
+.an-res { font-size: 11px; padding: 1px 6px; border-radius: 4px; }
+/* Outcome is carried by the word; the tint only makes a column scannable. */
+.an-res.won { background: #1f3a26; color: #a9e0b0; }
+.an-res.lost { background: #2a2927; color: var(--muted); }
+
+.an-watch { color: var(--ink-2); text-decoration: none; font-size: 12px; white-space: nowrap; }
+.an-watch:hover { color: var(--ink); text-decoration: underline; }
+
+/* ---- the own-v-enemy grid ---- */
+.an-grid { width: auto; border-collapse: separate; border-spacing: 4px; }
+.an-grid th {
+  position: static; background: none; padding: 0 6px;
+  text-align: center; font-variant-numeric: tabular-nums;
+}
+.an-grid td { padding: 0; }
+.an-cell {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  width: 76px; height: 52px; padding: 0; font: inherit; cursor: pointer;
+  color: var(--ink); border: 1px solid transparent; border-radius: 7px;
+  font-variant-numeric: tabular-nums;
+}
+.an-cell b { font-size: 14px; font-weight: 600; }
+.an-cell span { font-size: 11px; color: var(--ink-2); }
+.an-cell:hover { border-color: var(--muted); }
+.an-cell.on { border-color: var(--ink); }
+.an-cell:focus-visible { outline: 2px solid var(--ct); outline-offset: 2px; }
+.an-cell.empty { cursor: default; color: var(--line); border: 1px dashed var(--line); }
+
+.an-strip {
+  display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 10px;
+  font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.an-strip b { font-weight: 600; margin-right: 3px; }
+
+/* ---- kills by weapon ---- */
+.an-bars { list-style: none; margin: 0; padding: 0; max-width: 720px; display: flex; flex-direction: column; gap: 5px; }
+.an-bar-row {
+  display: grid; grid-template-columns: 12px 130px 1fr 28px 52px; align-items: center; gap: 10px;
+  width: 100%; padding: 2px 0; font: inherit; font-size: 12px; text-align: left;
+  color: var(--ink); background: none; border: 0; border-radius: 4px;
+}
+button.an-bar-row { cursor: pointer; }
+button.an-bar-row:hover { background: #201f1d; }
+button.an-bar-row:focus-visible { outline: 2px solid var(--ct); outline-offset: 2px; }
+.an-bar-caret { color: var(--muted); font-size: 10px; }
+/* Who got a weapon's kills, hanging off its bar on the same scale. */
+.an-bar-sub {
+  list-style: none; margin: 2px 0 6px; padding: 0;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.an-bar-sub .an-bar-l { padding-left: 12px; color: var(--muted); }
+.an-bar-sub .an-bar { opacity: .55; }
+.an-bar-l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+.an-bar-track { height: 10px; }
+.an-bar { display: block; height: 100%; min-width: 2px; background: #7c6cf0; border-radius: 0 4px 4px 0; }
+.an-bar-v { text-align: right; font-variant-numeric: tabular-nums; }
+.an-bar-s { font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* ---- one round traced across the grid ---- */
+.an-round-pick {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+  font-size: 12px; color: var(--ink-2);
+}
+.an-round-pick select {
+  padding: 5px 8px; font: inherit; font-size: 12px; cursor: pointer;
+  color: var(--ink); background: #201f1d;
+  border: 1px solid var(--line); border-radius: 6px;
+}
+.an-round-pick select:hover { border-color: var(--muted); }
+.an-round-pick select:focus-visible { outline: 2px solid var(--ct); outline-offset: 2px; }
+
+/* Room past the last row and column for a path that ends with a side wiped.
+   The header sizes are fixed because pathPoint() in Analytics.tsx computes
+   positions from them. */
+.an-grid-wrap { position: relative; width: max-content; padding: 0 22px 22px 0; }
+.an-grid thead th { height: 20px; line-height: 20px; padding: 0; }
+.an-grid tbody th { width: 20px; min-width: 20px; padding: 0; }
+.an-grid-wrap.tracing .an-cell { opacity: .55; }
+.an-path { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.an-path polyline { fill: none; stroke: #fff; stroke-width: 2; stroke-linejoin: round; }
+.an-path circle { fill: #fff; stroke: var(--surface); stroke-width: 2; }
+.an-path text {
+  fill: #0d0d0d; font-size: 10px; font-weight: 700;
+  text-anchor: middle; dominant-baseline: central; font-variant-numeric: tabular-nums;
+}
+
+.an-trace { margin-top: 4px; }
+.an-trace-h { display: flex; align-items: center; gap: 10px; font-size: 13px; margin-bottom: 6px; }
+.an-trace-h .an-watch { margin-left: auto; }
+.an-trace ol { list-style: none; margin: 0; padding: 0; }
+.an-trace li {
+  display: grid; grid-template-columns: 20px 34px 34px 1fr auto; gap: 8px; align-items: baseline;
+  padding: 5px 0; border-top: 1px solid var(--line); font-size: 12px;
+}
+.an-step-n {
+  width: 18px; height: 18px; border-radius: 50%; background: #fff; color: #0d0d0d;
+  font-size: 10px; font-weight: 700; display: grid; place-items: center; align-self: center;
+}
+.an-step-t, .an-step-c { font-variant-numeric: tabular-nums; }
+.an-step-d { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.an-step-d i { font-style: normal; color: var(--muted); margin-right: 6px; }
+.an-step-d b { font-weight: 500; }
+
+/* ---- paging, under any table long enough to need it ---- */
+.pager {
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  margin-top: 10px; font-size: 12px; color: var(--ink-2);
+}
+.pager label { display: flex; align-items: center; gap: 6px; margin-right: auto; color: var(--muted); }
+.pager select, .pager button {
+  padding: 3px 7px; font: inherit; font-size: 12px; cursor: pointer;
+  color: var(--ink); background: #201f1d;
+  border: 1px solid var(--line); border-radius: 6px;
+}
+.pager button { min-width: 28px; }
+.pager button:disabled { opacity: .35; cursor: not-allowed; }
+.pager select:hover, .pager button:hover:not(:disabled) { border-color: var(--muted); }
+.pager select:focus-visible, .pager button:focus-visible { outline: 2px solid var(--ct); outline-offset: 2px; }
+.pager-at { font-variant-numeric: tabular-nums; }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { routeFrom, viewerHref } from "./route";
+import { analyticsHref, routeFrom, viewerHref } from "./route";
 
 describe("routeFrom", () => {
   // The home page is what the app shows when no demo is named. Before this
@@ -53,6 +53,37 @@ describe("routeFrom", () => {
     expect(routeFrom("?demo=05-11-2026_mirage_44-32-10")).toMatchObject({
       demo: "05-11-2026_mirage_44-32-10",
     });
+  });
+});
+
+describe("analytics and round-relative links", () => {
+  it("routes ?view=analytics to the analytics page", () => {
+    expect(routeFrom(analyticsHref("nukepug"))).toEqual({ view: "analytics", demo: "nukepug" });
+  });
+
+  // A link that names a real demo should always open that demo.
+  it("opens the replay for a view it does not know", () => {
+    expect(routeFrom("?demo=nukepug&view=heatmap")).toMatchObject({ view: "viewer" });
+  });
+
+  // The analytics page links to "round 7, 41 seconds in" because it does not
+  // have the replay's clock. That has to survive the trip through the URL.
+  it("round-trips a moment within a round", () => {
+    const href = viewerHref("nukepug", undefined, { round: 7, sec: 41.3 });
+    expect(routeFrom(href)).toEqual({
+      view: "viewer", demo: "nukepug", start: 0, at: { round: 7, sec: 41.3 },
+    });
+  });
+
+  it("opens the round at its start when the offset is missing or bad", () => {
+    expect(routeFrom("?demo=x&round=7")).toMatchObject({ at: { round: 7, sec: 0 } });
+    expect(routeFrom("?demo=x&round=7&rt=abc")).toMatchObject({ at: { round: 7, sec: 0 } });
+  });
+
+  it("ignores a round that is not a round", () => {
+    for (const bad of ["?demo=x&round=0", "?demo=x&round=abc", "?demo=x&round=1.5", "?demo=x&round="]) {
+      expect(routeFrom(bad)).toEqual({ view: "viewer", demo: "x", start: 0 });
+    }
   });
 });
 

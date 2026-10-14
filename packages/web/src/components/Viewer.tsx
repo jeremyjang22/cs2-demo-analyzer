@@ -6,7 +6,7 @@ import TeamPanel from "./TeamPanel";
 import Timeline from "./Timeline";
 import ViewControls from "./ViewControls";
 import { GAME_COLORS, MovementRenderer, SAFE_COLORS, type Summary, type ViewState } from "../renderer";
-import { HOME_HREF } from "../route";
+import { analyticsHref, HOME_HREF, type RoundMoment } from "../route";
 import { statsUpTo } from "../stats";
 import { isPostround, scoreBefore, stepRound } from "../timeline";
 import { assertPayload, type Payload } from "../types";
@@ -16,6 +16,8 @@ interface Props {
   demo: string;
   /** Seconds into the match to open at, so a moment can be linked to. */
   start: number;
+  /** A round and seconds into it, as the analytics page links to moments. */
+  at?: RoundMoment;
 }
 
 function initialView(payload: Payload): ViewState {
@@ -37,7 +39,7 @@ const EMPTY: Summary = {
   equip: new Map(), bomb: null,
 };
 
-export default function Viewer({ demo, start }: Props) {
+export default function Viewer({ demo, start, at }: Props) {
   const [payload, setPayload] = useState<Payload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<Summary>(EMPTY);
@@ -74,7 +76,11 @@ export default function Viewer({ demo, start }: Props) {
     const r = new MovementRenderer(stage.current, payload, { onFrame: setSummary });
     renderer.current = r;
     void r.load().then(() => {
-      if (start > 0) r.seek(start);
+      // A round-relative moment wins over ?t=: it is the more specific ask,
+      // and only resolvable here, where the round's place on the clock is known.
+      const chapter = at && r.chapters.find((c) => c.meta.n === at.round);
+      if (chapter) r.seek(chapter.start + at.sec);
+      else if (start > 0) r.seek(start);
     });
     return () => { r.destroy(); renderer.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -162,6 +168,10 @@ export default function Viewer({ demo, start }: Props) {
           <a className="back" href={HOME_HREF}>← All demos</a>
           <span className="bcast-map">{payload.map}</span>
           <span className="bcast-demo">{demo}</span>
+          <nav className="view-tabs">
+            <a aria-current="page">Replay</a>
+            <a href={analyticsHref(demo)}>Analytics</a>
+          </nav>
         </div>
 
         {/* The score reads outward from the centre, each team's number on its

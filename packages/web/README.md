@@ -52,6 +52,7 @@ makes a local deploy produce the same thing CI does.
 |---|---|
 | `src/route.ts` | which view the URL asks for — the whole router |
 | `src/stats.ts` | K/D/A and ADR as of a moment, and the scoreboard order |
+| `src/analytics.ts` | one game's analytics payload and the groupings its page draws; `?demo=<name>&view=analytics` |
 | `src/api.ts` | the backend as this app sees it: `/me`, login, logout |
 | `src/types.ts` | payload shape, mirrors `export_movement.py` |
 | `src/radar.ts` | world → pixel transform, floor image names |

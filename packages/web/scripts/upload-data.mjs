@@ -61,6 +61,13 @@ for (const demo of demos) {
     continue;
   }
   uploads.push([posix.join("data", demo, "movement.json"), file]);
+
+  // Optional: written by `demo-analytics -web`, and a demo without it still
+  // replays - its analytics page just says there is nothing published.
+  const analytics = join(dataRoot, demo, "analytics.json");
+  if ((await stat(analytics).catch(() => null)) !== null) {
+    uploads.push([posix.join("data", demo, "analytics.json"), analytics]);
+  }
 }
 
 // The index is rebuilt and uploaded every time, even when only some demos were
