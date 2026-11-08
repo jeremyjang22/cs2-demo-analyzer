@@ -21,6 +21,10 @@ type csdmConfig struct {
 	ConcatenateSequences    bool           `json:"concatenateSequences"`
 	CloseGameAfterRecording bool           `json:"closeGameAfterRecording"`
 	TrueView                bool           `json:"trueView"`
+	RecordingSystem         string         `json:"recordingSystem,omitempty"`
+	Framerate               int            `json:"framerate,omitempty"`
+	Width                   int            `json:"width,omitempty"`
+	Height                  int            `json:"height,omitempty"`
 	Sequences               []csdmSequence `json:"sequences"`
 }
 
@@ -51,6 +55,12 @@ type csdmOptions struct {
 	demoDir  string // where the .dem files are on the recording machine
 	videoDir string // where CS Demo Manager writes; empty for its default
 	reel     bool   // join each demo's clips into one video
+	// recorder is CS Demo Manager's recordingSystem: "CS" for CS2's own
+	// recorder, "HLAE", or empty for the app's setting. As of CS Demo
+	// Manager 3.20.1 with the November 2026 plugin, HLAE crashed CS2 on the
+	// first seek and CS worked.
+	recorder           string
+	fps, width, height int
 }
 
 // writeCSDM writes one config per demo: CS Demo Manager records one demo per
@@ -74,6 +84,10 @@ func writeCSDM(clips []analytics.Clip, opt csdmOptions) error {
 			ConcatenateSequences:    opt.reel,
 			CloseGameAfterRecording: true,
 			TrueView:                true,
+			RecordingSystem:         opt.recorder,
+			Framerate:               opt.fps,
+			Width:                   opt.width,
+			Height:                  opt.height,
 		}
 		if opt.videoDir != "" {
 			cfg.OutputFolderPath = joinWindows(opt.videoDir, demo)

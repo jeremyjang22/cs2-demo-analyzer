@@ -59,6 +59,8 @@ go run ./clip-list -player 76561198000000001 -kinds opening,multikill,clutch,rou
 | `-demo-dir` | `C:\demos` | where the `.dem` files are **on the laptop** |
 | `-video-dir` | CSDM setting | where the laptop writes videos, one folder per demo |
 | `-reel` | off | join each demo's clips into a single video |
+| `-recorder` | `CS` | CS Demo Manager's recording system: `CS` (CS2's own recorder) or `HLAE`; empty uses the app's setting |
+| `-fps` / `-width` / `-height` | 60 / 1920 / 1080 | video size; 0 uses the app's setting |
 
 What each kind covers:
 
@@ -109,9 +111,31 @@ Rough cost: recording runs at or below real time, so a clip list's printed
 "seconds of footage" is a fair lower bound on how long the laptop is busy,
 plus about a minute per demo for CS2 to start and load.
 
+## Known problems (November 2026)
+
+Found on the first real run, CS Demo Manager 3.20.1, HLAE 2.193.0:
+
+- **CS Demo Manager can't find `psql`.** Add `C:\Program Files\PostgreSQL\<version>\bin`
+  to your user PATH and restart the app (and any open terminal).
+- **"Invalid FFmpeg executable".** CS Demo Manager only accepts a build that
+  reports a release number (`n7.1`, `9.0.2`), not a `master` build
+  (`N-12345-g…`). The FFmpeg HLAE's installer ships works.
+- **`EPERM … HLAE\ffmpeg\ffmpeg.ini`.** CS Demo Manager writes into HLAE's
+  folder, which Program Files does not allow. Copy HLAE to a writable folder
+  and point CS Demo Manager there.
+- **The run hangs and the demo just plays.** The CS2 update of 2026-11-04 broke
+  the CS2 plugin shipped with CS Demo Manager 3.20.1: it loads the sequences but
+  never runs a command. The fixed `static/cs2/server.dll` from CS Demo Manager's
+  main branch (commit ac9f858) works; drop it over the installed one (back the
+  old one up) until a release ships it.
+- **With that plugin, HLAE crashes CS2 on the first seek.** CS2's own recorder
+  works, hence `-recorder CS` by default. You lose HLAE's killfeed control.
+- **The camera leaves the player.** CS2 moves the spectator camera to the
+  killer when the watched player dies, and a mouse click cycles players.
+  clip-list re-spectates the clip's player every half second; don't touch the
+  machine while it records.
+
 ## Not done yet
 
-- Running it on the laptop end to end. The JSON matches CS Demo Manager's
-  `VideoCommandConfig` as of its November 2026 source, but has not been fed
-  to a real `csdm video` yet.
+- Recording with HLAE (see above).
 - Triggering it from the web app's Watch links, or a queue the laptop polls.

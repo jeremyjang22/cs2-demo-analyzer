@@ -48,6 +48,11 @@ func run() error {
 	flag.StringVar(&cs.videoDir, "video-dir", "", "with -csdm: where the recording machine writes videos, one "+
 		"folder per demo; empty uses CS Demo Manager's setting")
 	flag.BoolVar(&cs.reel, "reel", false, "with -csdm: join each demo's clips into one video")
+	flag.StringVar(&cs.recorder, "recorder", "CS", `with -csdm: CS Demo Manager's recording system, "CS" (CS2's own) `+
+		`or "HLAE"; empty uses the app's setting`)
+	flag.IntVar(&cs.fps, "fps", 60, "with -csdm: video framerate; 0 uses the app's setting")
+	flag.IntVar(&cs.width, "width", 1920, "with -csdm: video width; 0 uses the app's setting")
+	flag.IntVar(&cs.height, "height", 1080, "with -csdm: video height; 0 uses the app's setting")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(),
 			"usage: clip-list [flags] <input>...\n\n"+
