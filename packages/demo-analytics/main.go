@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -51,7 +50,7 @@ func run() error {
 	}
 	flag.Parse()
 
-	inputs, err := expand(flag.Args())
+	inputs, err := analytics.Inputs(flag.Args())
 	if err != nil {
 		return err
 	}
@@ -65,12 +64,7 @@ func run() error {
 	seen := make(map[string]string, len(inputs))
 	for _, in := range inputs {
 		start := time.Now()
-		var m *analytics.Match
-		if isDemoFile(in) {
-			m, err = analytics.FromDemo(in)
-		} else {
-			m, err = analytics.LoadDir(in)
-		}
+		m, err := analytics.Open(in)
 		if err != nil {
 			return err
 		}
@@ -123,37 +117,4 @@ func run() error {
 		fmt.Printf("\n%d demo(s) -> %s\n", len(matches), *outDir)
 	}
 	return nil
-}
-
-func isDemoFile(path string) bool { return strings.EqualFold(filepath.Ext(path), ".dem") }
-
-// expand turns the command line into one path per demo. A folder that is not
-// itself a demo's output is searched one level down, so `demo-analytics out`
-// picks up every parsed demo in it. The result is sorted within each folder so
-// the same inputs always produce the same fact-row order.
-func expand(args []string) ([]string, error) {
-	var out []string
-	for _, arg := range args {
-		if isDemoFile(arg) || analytics.IsDemoDir(arg) {
-			out = append(out, arg)
-			continue
-		}
-		entries, err := os.ReadDir(arg)
-		if err != nil {
-			return nil, fmt.Errorf("%s is not a .dem file or a folder: %w", arg, err)
-		}
-		var found []string
-		for _, e := range entries {
-			p := filepath.Join(arg, e.Name())
-			if e.IsDir() && analytics.IsDemoDir(p) {
-				found = append(found, p)
-			}
-		}
-		if len(found) == 0 {
-			return nil, fmt.Errorf("%s holds no round-collector output", arg)
-		}
-		sort.Strings(found)
-		out = append(out, found...)
-	}
-	return out, nil
 }
