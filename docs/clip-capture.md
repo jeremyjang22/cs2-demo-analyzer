@@ -130,6 +130,11 @@ Found on the first real run, CS Demo Manager 3.20.1, HLAE 2.193.0:
   old one up) until a release ships it.
 - **With that plugin, HLAE crashes CS2 on the first seek.** CS2's own recorder
   works, hence `-recorder CS` by default. You lose HLAE's killfeed control.
+- **Clips look soft even though the file is 1080p.** CS Demo Manager starts
+  CS2 at its *playback* resolution (Settings → Playback), not the video one, and
+  FFmpeg then stretches the frames. Set playback to 1920x1080, windowed.
+- **Low bitrate with `h264_nvenc`.** NVENC ignores CS Demo Manager's CRF and
+  encoded at ~2 Mbps. libx264 at CRF 18 gives ~24 Mbps (about 3 MB a second).
 - **The camera leaves the player.** CS2 moves the spectator camera to the
   killer when the watched player dies, and a mouse click cycles players.
   clip-list re-spectates the clip's player every half second; don't touch the
