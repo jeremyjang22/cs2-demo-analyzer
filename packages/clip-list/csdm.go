@@ -83,9 +83,7 @@ func writeCSDM(clips []analytics.Clip, opt csdmOptions) error {
 				Number: c.Sequence, StartTick: c.StartTick, EndTick: c.EndTick,
 				ShowAssists: true, ShowOnlyDeathNotices: true,
 				PlayersOptions: []struct{}{}, Cameras: []struct{}{},
-				// One camera at the first tick: CS Demo Manager keeps the
-				// view on that player until the sequence ends.
-				PlayerCameras: []csdmCamera{{Tick: c.StartTick, PlayerSteamID: c.SteamID, PlayerName: c.PlayerName}},
+				PlayerCameras: cameras(c),
 				RecordAudio:   true, DeathNoticesDuration: 5,
 			})
 		}
@@ -99,6 +97,28 @@ func writeCSDM(clips []analytics.Clip, opt csdmOptions) error {
 		}
 	}
 	return nil
+}
+
+// cameraEvery is how often, in seconds, a clip re-points the camera at its
+// player.
+const cameraEvery = 0.5
+
+// cameras keeps the view on the clip's player for the whole clip. One
+// spec_player at the start is not enough: CS2 moves the camera on its own
+// after a seek and whenever the spectated player dies (to their killer), and a
+// mouse click on the recording machine cycles players. So the player is
+// re-spectated every half second; while they are dead the command does
+// nothing and the game's own choice stands.
+func cameras(c analytics.Clip) []csdmCamera {
+	step := max(int32(cameraEvery*c.TickRate+0.5), 1)
+	var out []csdmCamera
+	for t := c.StartTick; t < c.EndTick; t += step {
+		out = append(out, csdmCamera{Tick: t, PlayerSteamID: c.SteamID, PlayerName: c.PlayerName})
+	}
+	if len(out) == 0 {
+		out = append(out, csdmCamera{Tick: c.StartTick, PlayerSteamID: c.SteamID, PlayerName: c.PlayerName})
+	}
+	return out
 }
 
 // joinWindows joins a path for the recording machine, which is Windows
