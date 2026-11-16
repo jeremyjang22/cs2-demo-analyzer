@@ -25,7 +25,23 @@ type csdmConfig struct {
 	Framerate               int            `json:"framerate,omitempty"`
 	Width                   int            `json:"width,omitempty"`
 	Height                  int            `json:"height,omitempty"`
+	FfmpegSettings          *csdmFfmpeg    `json:"ffmpegSettings,omitempty"`
 	Sequences               []csdmSequence `json:"sequences"`
+}
+
+// csdmFfmpeg replaces the app's FFmpeg settings for the job, whole: CS Demo
+// Manager does not merge it field by field. libx264 because h264_nvenc
+// ignored the CRF and encoded at about 2 Mbps; CRF 18 came out near 24 Mbps.
+type csdmFfmpeg struct {
+	CustomLocationEnabled    bool   `json:"customLocationEnabled"`
+	CustomExecutableLocation string `json:"customExecutableLocation"`
+	AudioBitrate             int    `json:"audioBitrate"`
+	ConstantRateFactor       int    `json:"constantRateFactor"`
+	VideoCodec               string `json:"videoCodec"`
+	AudioCodec               string `json:"audioCodec"`
+	VideoContainer           string `json:"videoContainer"`
+	InputParameters          string `json:"inputParameters"`
+	OutputParameters         string `json:"outputParameters"`
 }
 
 type csdmSequence struct {
@@ -61,6 +77,12 @@ type csdmOptions struct {
 	// first seek and CS worked.
 	recorder           string
 	fps, width, height int
+	// fullHUD keeps CS2's whole HUD (radar, health, ammo) in the video
+	// instead of only the kill feed.
+	fullHUD bool
+	// ffmpeg is the recording machine's ffmpeg.exe. Set, the job carries
+	// its own encoder settings; empty leaves the app's.
+	ffmpeg string
 }
 
 // writeCSDM writes one config per demo: CS Demo Manager records one demo per
@@ -89,13 +111,20 @@ func writeCSDM(clips []analytics.Clip, opt csdmOptions) error {
 			Width:                   opt.width,
 			Height:                  opt.height,
 		}
+		if opt.ffmpeg != "" {
+			cfg.FfmpegSettings = &csdmFfmpeg{
+				CustomLocationEnabled: true, CustomExecutableLocation: opt.ffmpeg,
+				AudioBitrate: 256, ConstantRateFactor: 18,
+				VideoCodec: "libx264", AudioCodec: "aac", VideoContainer: "mp4",
+			}
+		}
 		if opt.videoDir != "" {
 			cfg.OutputFolderPath = joinWindows(opt.videoDir, demo)
 		}
 		for _, c := range byDemo[demo] {
 			cfg.Sequences = append(cfg.Sequences, csdmSequence{
 				Number: c.Sequence, StartTick: c.StartTick, EndTick: c.EndTick,
-				ShowAssists: true, ShowOnlyDeathNotices: true,
+				ShowAssists: true, ShowOnlyDeathNotices: !opt.fullHUD,
 				PlayersOptions: []struct{}{}, Cameras: []struct{}{},
 				PlayerCameras: cameras(c),
 				RecordAudio:   true, DeathNoticesDuration: 5,

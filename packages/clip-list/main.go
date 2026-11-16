@@ -39,6 +39,8 @@ func run() error {
 	allClutches := flag.Bool("all-clutches", false, "also record clutches that were lost")
 	before := flag.Float64("before", 3, "seconds kept before each moment")
 	after := flag.Float64("after", 2, "seconds kept after each moment")
+	fromRound := flag.Bool("from-round-start", false, "start every clip when the round's freezetime ends, "+
+		"not -before seconds ahead of the moment")
 	noMerge := flag.Bool("no-merge", false, "keep overlapping clips of one player in one round separate")
 	var cs csdmOptions
 	flag.StringVar(&cs.dir, "csdm", "", "also write one CS Demo Manager video config per demo into this folder, "+
@@ -50,6 +52,10 @@ func run() error {
 	flag.BoolVar(&cs.reel, "reel", false, "with -csdm: join each demo's clips into one video")
 	flag.StringVar(&cs.recorder, "recorder", "CS", `with -csdm: CS Demo Manager's recording system, "CS" (CS2's own) `+
 		`or "HLAE"; empty uses the app's setting`)
+	flag.BoolVar(&cs.fullHUD, "hud", false, "with -csdm: keep CS2's full HUD, radar included; by default "+
+		"only the kill feed shows")
+	flag.StringVar(&cs.ffmpeg, "ffmpeg", "", "with -csdm: ffmpeg.exe on the recording machine; set, each job "+
+		"encodes x264 CRF 18 mp4 instead of using the app's FFmpeg settings")
 	flag.IntVar(&cs.fps, "fps", 60, "with -csdm: video framerate; 0 uses the app's setting")
 	flag.IntVar(&cs.width, "width", 1920, "with -csdm: video width; 0 uses the app's setting")
 	flag.IntVar(&cs.height, "height", 1080, "with -csdm: video height; 0 uses the app's setting")
@@ -63,7 +69,7 @@ func run() error {
 
 	opt := analytics.ClipOptions{
 		MinMulti: *minMulti, AllClutches: *allClutches,
-		Before: *before, After: *after, NoMerge: *noMerge,
+		Before: *before, After: *after, NoMerge: *noMerge, FromRoundStart: *fromRound,
 	}
 	for _, k := range strings.Split(*kinds, ",") {
 		k = strings.TrimSpace(k)

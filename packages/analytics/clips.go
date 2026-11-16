@@ -41,6 +41,11 @@ type ClipOptions struct {
 	AllClutches bool
 	// Before and After pad each clip, in seconds.
 	Before, After float64
+	// FromRoundStart starts every clip when the round's freezetime ends
+	// instead of Before seconds ahead of the moment, so the clip shows how
+	// the player got there. Clips of one player in one round then always
+	// overlap and, unless NoMerge, become one.
+	FromRoundStart bool
 	// NoMerge keeps overlapping clips of the same player and round apart. By
 	// default they are joined, so an opening kill that starts a 4k is
 	// recorded once.
@@ -108,6 +113,9 @@ func Clips(m *Match, opt ClipOptions) []Clip {
 			return
 		}
 		start, end := from-before, to+after
+		if opt.FromRoundStart {
+			start = rd.Meta.FreezeEndTick
+		}
 		// A clip never reaches into the previous round's freezetime or past
 		// the moment the next one begins, where the player may not exist.
 		start = max(start, rd.Meta.StartTick)
