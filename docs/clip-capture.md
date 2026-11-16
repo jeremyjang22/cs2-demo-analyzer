@@ -59,6 +59,9 @@ go run ./clip-list -player 76561198000000001 -kinds opening,multikill,clutch,rou
 | `-demo-dir` | `C:\demos` | where the `.dem` files are **on the laptop** |
 | `-video-dir` | CSDM setting | where the laptop writes videos, one folder per demo |
 | `-reel` | off | join each demo's clips into a single video |
+| `-from-round-start` | off | start every clip at freeze end instead of `-before` seconds ahead; a player's clips in one round then merge into one |
+| `-hud` | off | keep CS2's full HUD, radar included; by default only the kill feed shows |
+| `-ffmpeg` | none | ffmpeg.exe on the laptop; each job then encodes x264 CRF 18 mp4 itself |
 | `-recorder` | `CS` | CS Demo Manager's recording system: `CS` (CS2's own recorder) or `HLAE`; empty uses the app's setting |
 | `-fps` / `-width` / `-height` | 60 / 1920 / 1080 | video size; 0 uses the app's setting |
 
@@ -110,6 +113,25 @@ laptop alone while it runs: CS2 takes over the screen.
 Rough cost: recording runs at or below real time, so a clip list's printed
 "seconds of footage" is a fair lower bound on how long the laptop is busy,
 plus about a minute per demo for CS2 to start and load.
+
+## 4. Keys and mouse overlay (optional)
+
+`clip-overlay` draws the followed player's WASD, walk, duck, jump, both mouse
+buttons and a ring whose dot moves with how fast they turn their aim, from
+the same `ticks.csv.gz` the parser wrote. It writes one `.ass` subtitle script
+per clip and, given ffmpeg (built with libass, as the BtbN and gyan builds
+are), burns it into a copy of each recorded clip:
+
+```powershell
+cd packages
+go run ./clip-overlay -clips D:\nyadt\clips\clips.json -data D:\nyadt\out `
+    -videos D:\nyadt\videos -ffmpeg "C:\...\ffmpeg.exe" -out D:\nyadt\videos\overlay
+```
+
+It is drawn afterwards, not by the game, so it works with either recorder and
+needs nothing from CS Demo Manager. It shows what the demo recorded: the
+input of each tick (the raw column is one tick late; corrected here), hidden
+while the player is dead. Mouse movement is inferred from view angle changes.
 
 ## Known problems (November 2026)
 
