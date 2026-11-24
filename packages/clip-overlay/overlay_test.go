@@ -32,25 +32,6 @@ func TestDeadPlayerHidesOverlay(t *testing.T) {
 	}
 }
 
-func TestAngleDeltaWraps(t *testing.T) {
-	if d := angleDelta(-179, 179); d != 2 {
-		t.Errorf("angleDelta(-179, 179) = %v, want 2", d)
-	}
-	if d := angleDelta(10, 20); d != -10 {
-		t.Errorf("angleDelta(10, 20) = %v, want -10", d)
-	}
-}
-
-func TestDotOffsetCapsAtRing(t *testing.T) {
-	dx, dy := dotOffset(-10000, 0)
-	if dx >= 0 || dx < -(mouseR-dotR)-mouseStep || dy != 0 {
-		t.Errorf("flick left = (%d, %d), want a negative x at the ring", dx, dy)
-	}
-	if dx, dy := dotOffset(0, 0); dx != 0 || dy != 0 {
-		t.Errorf("still = (%d, %d), want centre", dx, dy)
-	}
-}
-
 func TestASSTimes(t *testing.T) {
 	if got := assTime(3723.456); got != "1:02:03.46" {
 		t.Errorf("assTime = %q", got)

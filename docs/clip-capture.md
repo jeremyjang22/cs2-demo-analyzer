@@ -114,11 +114,10 @@ Rough cost: recording runs at or below real time, so a clip list's printed
 "seconds of footage" is a fair lower bound on how long the laptop is busy,
 plus about a minute per demo for CS2 to start and load.
 
-## 4. Keys and mouse overlay (optional)
+## 4. Keys overlay (optional)
 
-`clip-overlay` draws the followed player's WASD, walk, duck, jump, both mouse
-buttons and a ring whose dot moves with how fast they turn their aim, from
-the same `ticks.csv.gz` the parser wrote. It writes one `.ass` subtitle script
+`clip-overlay` draws the followed player's WASD, walk, duck, jump and both
+mouse buttons, from the same `ticks.csv.gz` the parser wrote. It writes one `.ass` subtitle script
 per clip and, given ffmpeg (built with libass, as the BtbN and gyan builds
 are), burns it into a copy of each recorded clip:
 
@@ -131,7 +130,9 @@ go run ./clip-overlay -clips D:\nyadt\clips\clips.json -data D:\nyadt\out `
 It is drawn afterwards, not by the game, so it works with either recorder and
 needs nothing from CS Demo Manager. It shows what the demo recorded: the
 input of each tick (the raw column is one tick late; corrected here), hidden
-while the player is dead. Mouse movement is inferred from view angle changes.
+while the player is dead. There is deliberately no aim indicator: an earlier
+version drew one from view angle changes, but the POV camera already shows
+where the player is aiming, so it added nothing on video.
 
 ## Known problems (November 2026)
 

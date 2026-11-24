@@ -22,10 +22,9 @@ const (
 
 // Sample is one tick of the followed player, from ticks.csv.
 type Sample struct {
-	Tick       int32
-	Yaw, Pitch float64
-	Buttons    uint64
-	Alive      bool
+	Tick    int32
+	Buttons uint64
+	Alive   bool
 }
 
 // key is one box of the overlay: where it sits, what it says, and which
@@ -36,8 +35,12 @@ type key struct {
 	x, y, w, h int // relative to the overlay's top left
 }
 
-// Layout, in pixels of a 1920x1080 frame. Movement keys on the left, mouse on
-// the right, the way a player's hands sit.
+// Layout, in pixels of a 1920x1080 frame. Movement keys on the left, mouse
+// buttons on the right, the way a player's hands sit.
+//
+// There is no aim indicator. An earlier version drew a ring whose dot moved
+// with how fast the view turned; on a POV video the camera already shows the
+// aim, so it only added noise.
 const (
 	unit = 54
 	gap  = 6
@@ -54,18 +57,6 @@ var keys = []key{
 	{"M1", btnAttack, 3*(unit+gap) + 2*gap, 0, unit, unit},
 	{"M2", btnAttack2, 4*(unit+gap) + 2*gap, 0, unit, unit},
 }
-
-// The mouse panel sits under M1/M2: a ring whose dot moves with how fast the
-// aim is turning, so a flick reads as a jump to the edge.
-const (
-	mouseCX     = 3*(unit+gap) + 2*gap + unit + gap/2
-	mouseCY     = unit + gap + 58
-	mouseR      = 52
-	dotR        = 9
-	fullTurnDPS = 600.0 // aim speed, degrees a second, that puts the dot on the ring
-	smoothTicks = 4     // aim speed is averaged over this many ticks
-	mouseStep   = 4     // dot positions are snapped to this many pixels
-)
 
 // Options place and time the overlay.
 type Options struct {
@@ -111,14 +102,6 @@ func ASS(samples []Sample, opt Options) string {
 			event(&b, 1, iv, box(opt.X+k.x, opt.Y+k.y, k.w, k.h, "&H3FC8FF&", "&H20&"))
 		}
 	}
-
-	cx, cy := opt.X+mouseCX, opt.Y+mouseCY
-	for _, iv := range alive {
-		event(&b, 0, iv, circle(cx, cy, mouseR, "&H000000&", "&H70&", 2))
-	}
-	for _, d := range mouseDots(samples, opt.TickRate, at, clipEnd) {
-		event(&b, 2, d.interval, circle(cx+d.dx, cy+d.dy, dotR, "&H3FC8FF&", "&H00&", 0))
-	}
 	return b.String()
 }
 
@@ -161,66 +144,6 @@ func heldIntervals(samples []Sample, pressed func(int) uint64, bit uint64, at fu
 	return out
 }
 
-type dot struct {
-	interval
-	dx, dy int
-}
-
-// mouseDots places the aim-speed dot for every stretch it stays put.
-func mouseDots(samples []Sample, rate float64, at func(int32) float64, end float64) []dot {
-	var out []dot
-	for i, s := range samples {
-		dx, dy := 0, 0
-		j := max(i-smoothTicks, 0)
-		if s.Alive && i > j && samples[j].Alive {
-			dt := float64(s.Tick-samples[j].Tick) / rate
-			// Yaw grows turning left, so a right turn is a falling yaw; pitch
-			// grows looking down, which is down on screen too.
-			vx := -angleDelta(s.Yaw, samples[j].Yaw) / dt
-			vy := (s.Pitch - samples[j].Pitch) / dt
-			dx, dy = dotOffset(vx, vy)
-		}
-		t := at(s.Tick)
-		if !s.Alive {
-			if n := len(out); n > 0 && out[n-1].to < 0 {
-				out[n-1].to = t
-			}
-			continue
-		}
-		if n := len(out); n > 0 && out[n-1].to < 0 {
-			if out[n-1].dx == dx && out[n-1].dy == dy {
-				continue
-			}
-			out[n-1].to = t
-		}
-		out = append(out, dot{interval{t, -1}, dx, dy})
-	}
-	if n := len(out); n > 0 && out[n-1].to < 0 {
-		out[n-1].to = end
-	}
-	return out
-}
-
-// dotOffset maps an aim speed in degrees a second to the dot's offset from
-// the ring's centre, keeping its direction and capping it at the ring.
-func dotOffset(vx, vy float64) (int, int) {
-	speed := math.Hypot(vx, vy)
-	if speed == 0 {
-		return 0, 0
-	}
-	// A square root curve, so small adjustments still move the dot visibly
-	// while a flick does not leave the ring.
-	r := math.Sqrt(min(speed/fullTurnDPS, 1)) * float64(mouseR-dotR)
-	snap := func(v float64) int { return int(math.Round(v/mouseStep)) * mouseStep }
-	return snap(vx / speed * r), snap(vy / speed * r)
-}
-
-// angleDelta is b to a the short way round, for yaw that wraps at ±180.
-func angleDelta(a, b float64) float64 {
-	d := math.Mod(a-b+540, 360) - 180
-	return d
-}
-
 const assHeader = `[Script Info]
 ScriptType: v4.00+
 PlayResX: 1920
@@ -261,19 +184,4 @@ func label(cx, cy int, text string, h int) string {
 	}
 	size = min(size, h/2)
 	return fmt.Sprintf(`{\an5\pos(%d,%d)\fs%d\bord2\shad0}%s`, cx, cy, size, text)
-}
-
-// circle draws a disc of radius r centred on (cx, cy) with four Bezier arcs,
-// in drawing coordinates whose origin is the disc's bounding box corner.
-func circle(cx, cy, r int, fill, alpha string, border int) string {
-	k := int(math.Round(float64(r) * 0.5523)) // control point offset for a quarter circle
-	d := 2 * r
-	path := fmt.Sprintf("m %d %d b %d %d %d %d %d %d b %d %d %d %d %d %d b %d %d %d %d %d %d b %d %d %d %d %d %d",
-		d, r,
-		d, r-k, r+k, 0, r, 0,
-		r-k, 0, 0, r-k, 0, r,
-		0, r+k, r-k, d, r, d,
-		r+k, d, d, r+k, d, r)
-	return fmt.Sprintf(`{\an7\pos(%d,%d)\p1\bord%d\shad0\1c%s\1a%s\3c&HFFFFFF&\3a&H40&}%s{\p0}`,
-		cx-r, cy-r, border, fill, alpha, path)
 }

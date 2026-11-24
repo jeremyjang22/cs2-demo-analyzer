@@ -1,4 +1,5 @@
-// clip-overlay draws the followed player's keys and mouse over recorded clips.
+// clip-overlay draws the followed player's keys and mouse buttons over
+// recorded clips.
 //
 // It reads the clip list clip-list wrote, pulls each clip's player and tick
 // range out of the demo's ticks.csv.gz, and writes an ASS subtitle script per
@@ -148,7 +149,7 @@ func loadSamples(path string, clips []analytics.Clip) ([][]Sample, error) {
 	for i, h := range header {
 		col[h] = i
 	}
-	for _, name := range []string{"tick", "steamid", "yaw", "pitch", "buttons", "is_alive"} {
+	for _, name := range []string{"tick", "steamid", "buttons", "is_alive"} {
 		if _, ok := col[name]; !ok {
 			return nil, fmt.Errorf("%s has no %q column", path, name)
 		}
@@ -175,8 +176,6 @@ func loadSamples(path string, clips []analytics.Clip) ([][]Sample, error) {
 				continue
 			}
 			s := Sample{Tick: tick, Alive: rec[col["is_alive"]] == "1"}
-			s.Yaw, _ = strconv.ParseFloat(rec[col["yaw"]], 64)
-			s.Pitch, _ = strconv.ParseFloat(rec[col["pitch"]], 64)
 			s.Buttons, _ = strconv.ParseUint(rec[col["buttons"]], 10, 64)
 			out[i] = append(out[i], s)
 		}
