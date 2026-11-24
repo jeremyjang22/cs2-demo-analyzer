@@ -1,16 +1,8 @@
 import { useEffect, useState } from "react";
 import SteamAuth from "./SteamAuth";
-import { viewerHref } from "../route";
-
-/** One entry from /data/index.json, written by scripts/index-demos.mjs. */
-interface DemoSummary {
-  name: string;
-  map: string;
-  rounds: number;
-  players: number;
-  kb: number;
-  seconds: number;
-}
+import { loadIndex, type DemoSummary } from "../payload";
+import { demoLabel, KIND_LABEL, PROS } from "../pros";
+import { PROS_HREF, viewerHref } from "../route";
 
 /** "1h 22m" / "29m" — a match length, not a stopwatch. */
 function duration(seconds: number): string {
@@ -29,18 +21,11 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const ac = new AbortController();
-    fetch(`${import.meta.env.BASE_URL}data/index.json`, { signal: ac.signal })
-      .then((r) => {
-        // A missing index is the normal state before anything is published,
-        // not a failure — an empty list says that better than an error does.
-        if (r.status === 404) return { demos: [] };
-        if (!r.ok) throw new Error(`could not load the demo list (HTTP ${r.status})`);
-        return r.json();
-      })
-      .then((data: { demos?: DemoSummary[] }) => setDemos(data.demos ?? []))
-      .catch((e: Error) => e.name !== "AbortError" && setError(e.message));
-    return () => ac.abort();
+    let cancelled = false;
+    loadIndex()
+      .then((list) => !cancelled && setDemos(list))
+      .catch((e: Error) => !cancelled && setError(e.message));
+    return () => { cancelled = true; };
   }, []);
 
   return (
@@ -55,6 +40,16 @@ export default function Home() {
         </div>
         <SteamAuth />
       </header>
+
+      {PROS.length > 0 && (
+        <a className="pros-link" href={PROS_HREF}>
+          <b>Pros</b>
+          <span className="muted">
+            Pro players' POVs from their pugs and matches, by map: {PROS.map((p) => p.name).join(", ")}
+          </span>
+          <span aria-hidden>→</span>
+        </a>
+      )}
 
       <section>
         <h2 className="home-h2">Demos</h2>
@@ -76,7 +71,10 @@ export default function Home() {
           {demos?.map((d) => (
             <a key={d.name} className="demo-card" href={viewerHref(d.name)}>
               <span className="demo-map">{mapLabel(d.map)}</span>
-              <span className="demo-name">{d.name}</span>
+              <span className="demo-name" title={d.name}>{demoLabel(d)}</span>
+              {d.kind && d.kind !== "unknown" && (
+                <span className={`kind kind-${d.kind}`}>{KIND_LABEL[d.kind]}</span>
+              )}
               <span className="demo-meta">
                 <span>{d.rounds} rounds</span>
                 <span>{d.players} players</span>

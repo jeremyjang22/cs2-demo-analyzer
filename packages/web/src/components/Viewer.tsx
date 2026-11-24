@@ -6,10 +6,11 @@ import TeamPanel from "./TeamPanel";
 import Timeline from "./Timeline";
 import ViewControls from "./ViewControls";
 import { GAME_COLORS, MovementRenderer, SAFE_COLORS, type Summary, type ViewState } from "../renderer";
-import { analyticsHref, HOME_HREF, type RoundMoment } from "../route";
+import { analyticsHref, compareHref, HOME_HREF, startersHref, type RoundMoment } from "../route";
 import { statsUpTo } from "../stats";
 import { isPostround, scoreBefore, stepRound } from "../timeline";
-import { assertPayload, type Payload } from "../types";
+import { loadPayload } from "../payload";
+import type { Payload } from "../types";
 
 interface Props {
   /** Folder name under public/data (locally) or under data/ in R2. */
@@ -52,13 +53,8 @@ export default function Viewer({ demo, start, at }: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`${import.meta.env.BASE_URL}data/${demo}/movement.json`)
-      .then((r) => {
-        if (!r.ok) throw new Error(`movement.json for ${demo} not found (HTTP ${r.status})`);
-        return r.json();
-      })
-      .then((data: unknown) => {
-        assertPayload(data);
+    loadPayload(demo)
+      .then((data) => {
         if (cancelled) return;
         // Set together: the renderer needs the <main> element, which only
         // renders once both exist. Deriving the view inside the renderer effect
@@ -78,7 +74,8 @@ export default function Viewer({ demo, start, at }: Props) {
     void r.load().then(() => {
       // A round-relative moment wins over ?t=: it is the more specific ask,
       // and only resolvable here, where the round's place on the clock is known.
-      const chapter = at && r.chapters.find((c) => c.meta.n === at.round);
+      const game = at?.game ?? 0;
+      const chapter = at && r.chapters.find((c) => c.meta.n === at.round && (c.meta.dm ?? 0) === game);
       if (chapter) r.seek(chapter.start + at.sec);
       else if (start > 0) r.seek(start);
     });
@@ -171,6 +168,9 @@ export default function Viewer({ demo, start, at }: Props) {
           <nav className="view-tabs">
             <a aria-current="page">Replay</a>
             <a href={analyticsHref(demo)}>Analytics</a>
+            <a href={startersHref(demo)}>Starters</a>
+            {/* Opens on the round on screen, against the round after it. */}
+            <a href={compareHref(chapter ? { demo, key: chapter.key } : undefined)}>Compare</a>
           </nav>
         </div>
 

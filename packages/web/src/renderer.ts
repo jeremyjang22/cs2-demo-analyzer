@@ -153,7 +153,7 @@ const KIT_COLOR = "#5aa9f0";
  * yellow is what lets you connect the throw to the effect without reading
  * anything.
  */
-const ARC_COLOR: Record<UtilEvent["kind"], string> = {
+export const ARC_COLOR: Record<UtilEvent["kind"], string> = {
   he: "#ff6b57",
   flash: "#ffe9a3",
   smoke: "#d6dee6",

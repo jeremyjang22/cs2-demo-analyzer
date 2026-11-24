@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { analyticsHref, routeFrom, viewerHref } from "./route";
+import {
+  analyticsHref, compareHref, proHref, PROS_HREF, routeFrom, startersHref, viewerHref,
+} from "./route";
 
 describe("routeFrom", () => {
   // The home page is what the app shows when no demo is named. Before this
@@ -104,5 +106,86 @@ describe("viewerHref", () => {
     expect(routeFrom(href)).toEqual({
       view: "viewer", demo: "05-11-2026_mirage_44-32-10", start: 1482,
     });
+  });
+});
+
+describe("starters route", () => {
+  it("round-trips a player and side on one demo", () => {
+    const href = startersHref("nukepug", { player: "76561198074762801", side: "CT" });
+    expect(routeFrom(href)).toEqual({
+      view: "starters", demos: ["nukepug"], player: "76561198074762801", side: "CT",
+    });
+  });
+
+  // A pro's set: several demos, followed as the pro rather than one account.
+  it("round-trips a set of demos and a pro", () => {
+    const href = startersHref(["a", "b", "c"], { pro: "m0nesy", side: "T", t: 15 });
+    expect(routeFrom(href)).toEqual({
+      view: "starters", demos: ["a", "b", "c"], pro: "m0nesy", side: "T", t: 15,
+    });
+  });
+
+  // Links written before sets existed named one demo with ?demo=.
+  it("still reads the single-demo form", () => {
+    expect(routeFrom("?demo=x&view=starters")).toEqual({ view: "starters", demos: ["x"] });
+  });
+
+  // A bare link, or a side spelled oddly, still opens the page on its defaults.
+  it("leaves out what it cannot read", () => {
+    expect(routeFrom("?demo=x&view=starters&side=spec")).toEqual({ view: "starters", demos: ["x"] });
+    expect(routeFrom("?demo=x&view=starters&side=t")).toEqual({ view: "starters", demos: ["x"], side: "T" });
+    expect(routeFrom("?demo=x&view=starters&t=abc")).toEqual({ view: "starters", demos: ["x"] });
+    expect(routeFrom("?view=starters")).toEqual({ view: "home" });
+  });
+});
+
+describe("pros routes", () => {
+  it("routes the section and a filtered pro page", () => {
+    expect(routeFrom(PROS_HREF)).toEqual({ view: "pros" });
+    expect(routeFrom(proHref("m0nesy", "de_mirage", "pug"))).toEqual({
+      view: "pro", pro: "m0nesy", map: "de_mirage", kind: "pug",
+    });
+  });
+
+  it("drops an unknown kind and leaves 'all' implicit", () => {
+    expect(routeFrom("?view=pro&pro=x&kind=scrim")).toEqual({ view: "pro", pro: "x" });
+    expect(proHref("x", undefined, "all")).toBe("?view=pro&pro=x");
+  });
+
+  it("sends a pro page with no pro to the list", () => {
+    expect(routeFrom("?view=pro")).toEqual({ view: "pros" });
+  });
+});
+
+describe("compare route", () => {
+  const a = { demo: "m0nesy-mirage", key: "0:5" };
+  const b = { demo: "nukepug", key: "0:12" };
+
+  it("round-trips two rounds, an anchor and a negative time", () => {
+    expect(routeFrom(compareHref(a, b, "plant", -12.5))).toEqual({
+      view: "compare", a, b, align: "plant", t: -12.5,
+    });
+  });
+
+  // Compare has no ?demo=; it must not fall through to the home page.
+  it("opens with nothing chosen", () => {
+    expect(routeFrom("?view=compare")).toEqual({ view: "compare" });
+  });
+
+  it("drops what it cannot read", () => {
+    expect(routeFrom("?view=compare&a=junk&align=sideways&t=x")).toEqual({ view: "compare" });
+  });
+});
+
+describe("round links into merged payloads", () => {
+  // Every game of a merged payload has a round 5; the link has to say which.
+  it("carries the game", () => {
+    expect(routeFrom(viewerHref("m", undefined, { round: 5, sec: 3, game: 2 }))).toEqual({
+      view: "viewer", demo: "m", start: 0, at: { round: 5, sec: 3, game: 2 },
+    });
+  });
+
+  it("leaves game one implicit, so older links read the same", () => {
+    expect(viewerHref("m", undefined, { round: 5, sec: 0, game: 0 })).toBe("?demo=m&round=5");
   });
 });
