@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import BombStatus from "./BombStatus";
 import KillFeed from "./KillFeed";
 import PlaybackBar from "./PlaybackBar";
 import TeamPanel from "./TeamPanel";
@@ -144,6 +143,18 @@ export default function Viewer({ demo, start, at }: Props) {
     ? `${chapter.meta.why} · +${(summary.t - chapter.decided).toFixed(1)}s`
     : undefined;
 
+  // Which side each team is on this round. Read from a member's track rather
+  // than assumed from the half, so overtime swaps come out right as well.
+  const sideOf = (teamId: number): number | undefined => {
+    if (!chapter) return undefined;
+    for (const p of payload.players) {
+      if (p.team !== teamId) continue;
+      const s = p.rounds.find((t) => t.k === chapter.key)?.s;
+      if (s !== undefined) return s;
+    }
+    return undefined;
+  };
+
   const toggle = (id: string) =>
     patch({
       selected: view.selected.includes(id)
@@ -186,16 +197,13 @@ export default function Viewer({ demo, start, at }: Props) {
           <b>{sb}</b>
           <span className="bs-team right">{payload.teams[1]?.name}</span>
         </div>
-
-        <div className="bcast-bomb">
-          <BombStatus bomb={summary.bomb} names={names} />
-        </div>
       </header>
 
       <div className="bcast-body">
         {payload.teams[0] && (
           <TeamPanel
             team={payload.teams[0]}
+            side={sideOf(payload.teams[0].id)}
             payload={payload}
             colors={colors}
             selected={view.selected}
@@ -246,6 +254,7 @@ export default function Viewer({ demo, start, at }: Props) {
           {payload.teams[1] && (
             <TeamPanel
               team={payload.teams[1]}
+              side={sideOf(payload.teams[1].id)}
               payload={payload}
               colors={colors}
               selected={view.selected}

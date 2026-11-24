@@ -14,7 +14,8 @@
     "radar": "node scripts/sync-radar.mjs",
     "index-demos": "node scripts/index-demos.mjs",
     "deploy": "npm run build && wrangler deploy",
-    "upload-data": "node scripts/upload-data.mjs"
+    "upload-data": "node scripts/upload-data.mjs",
+    "vendor-equipment": "node scripts/vendor-equipment.mjs"
   },
   "dependencies": {
     "react": "^19.2.0",

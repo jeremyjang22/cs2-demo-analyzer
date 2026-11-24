@@ -30,6 +30,17 @@ export const GAME_COLORS = ["#F2C94C", "#B769D6", "#4CC94C", "#4E9BE8", "#F09A3E
  */
 export const SAFE_COLORS = ["#3987e5", "#d95926", "#199e70"];
 
+/**
+ * Map colours, by side: 2 = T, 3 = CT. The map shows sides, not people. Ten
+ * per-player hues on one radar made "who is fighting whom" a lookup, while
+ * two colours answer it at a glance. Names beside the markers carry identity,
+ * and the rosters keep the per-player palette. Orange against blue stays
+ * distinct under the common colour-vision deficiencies, so this holds in both
+ * palettes. Matches --t and --ct in styles.css.
+ */
+export const SIDE_COLORS: Record<number, string> = { 2: "#eda100", 3: "#3987e5" };
+const NO_SIDE = "#ffffff";
+
 const SURFACE = "#1a1a19";
 const AIRBORNE = "#ffffff";
 const TRAIL_SEC = 8;
@@ -370,10 +381,10 @@ export class MovementRenderer {
     this.raf = requestAnimationFrame(this.step);
   };
 
-  private colorOf(player: Player): string {
-    if (this.state.palette === "game") return GAME_COLORS[player.col % GAME_COLORS.length];
-    const i = this.state.selected.indexOf(player.id);
-    return SAFE_COLORS[Math.max(0, i) % SAFE_COLORS.length];
+  /** A player's side colour in one round; teams swap sides at half. */
+  private sideColor(player: Player, chapter: Chapter): string {
+    const side = player.rounds.find((r) => r.k === chapter.key)?.s;
+    return (side !== undefined && SIDE_COLORS[side]) || NO_SIDE;
   }
 
   /** Tracks for the round on screen, for the players that are selected. */
@@ -431,13 +442,13 @@ export class MovementRenderer {
       // a smoke and under the person who fired it.
       if (state.fire && live) {
         for (const tracer of fadingAt(this.shots(chapter), sec, TRACER_SEC)) {
-          this.drawTracer(tracer);
+          this.drawTracer(tracer, chapter);
         }
       }
 
       const tracks = this.tracksFor(chapter);
       for (const { player, track } of tracks) {
-        const color = this.colorOf(player);
+        const color = SIDE_COLORS[track.s] ?? NO_SIDE;
         if (!live) {
           this.drawPath(track, 0, track.x.length - 1, color, 0.22);
           continue;
@@ -537,12 +548,12 @@ export class MovementRenderer {
    * than as anonymous lines, and drawn thin and brief so a full spray does not
    * black out the corridor it went down.
    */
-  private drawTracer({ event, age }: Fading<ShotEvent>): void {
+  private drawTracer({ event, age }: Fading<ShotEvent>, chapter: Chapter): void {
     const shooter = this.state.selected.includes(event.by);
     if (!shooter) return; // hiding a player hides their fire, like their dot
 
     const player = this.payload.players.find((p) => p.id === event.by);
-    const color = player ? this.colorOf(player) : "#ffffff";
+    const color = player ? this.sideColor(player, chapter) : NO_SIDE;
     const end = tracerEnd(event, TRACER_MISS_UNITS);
 
     const ctx = this.ctxFor(event.lv);

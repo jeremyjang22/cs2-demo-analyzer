@@ -111,10 +111,16 @@ ul.feed li {
   padding: 3px 5px; background: #201f1d; border-radius: 5px; white-space: nowrap;
 }
 .feed-t { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 30px; }
-.feed-w { color: var(--ink-2); display: flex; align-items: center; gap: 4px; margin: 0 2px; }
+.feed-w { color: var(--ink-2); display: flex; align-items: center; gap: 4px; margin: 0 2px; flex: none; }
+/* Names give way before the weapon does: a clipped name still has its colour
+   and a tooltip, a clipped weapon icon is just a smear. */
+.feed-p { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tag { font-size: 9px; padding: 1px 3px; border-radius: 3px; letter-spacing: .04em; }
-.tag.hs { background: #5a2320; color: #ffb3aa; }
-.tag.wb { background: #23405a; color: #a8d2ff; }
+/* Headshot and wallbang keep the tints their old text tags had, so the two
+   read apart at a glance even though both icons are small and round. */
+.mark { display: flex; }
+.mark.hs { color: #ff8f82; }
+.mark.wb { color: #a8d2ff; }
 
 /* ---- transport ---- */
 .transport { display: flex; flex-direction: column; gap: 6px; }
@@ -187,6 +193,15 @@ ul.feed li {
 }
 /* Icons sit on the text baseline rather than hanging below it. */
 .kit svg, .hp svg { display: block; flex: none; }
+
+/* A game icon: the SVG is the mask, the colour is whatever the text is. */
+.gicon {
+  display: block; flex: none;
+  background-color: currentColor;
+  -webkit-mask-position: center; mask-position: center;
+  -webkit-mask-size: contain; mask-size: contain;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+}
 .kit .armor { display: flex; align-items: center; gap: 2px; color: #4a4945; }
 .kit .armor.on { color: #7fb4e8; }
 .kit .armor-n { font-variant-numeric: tabular-nums; }
@@ -200,24 +215,6 @@ ul.feed li {
 .kit .gun.sidearm { color: var(--muted); }
 .kit .nades { margin-left: auto; display: flex; gap: 3px; }
 .kit .nade { display: flex; }
-
-/* ---- bomb status line ---- */
-.bomb-status {
-  display: flex; align-items: center; gap: 6px; font-size: 12px;
-  padding: 4px 6px; background: #201f1d; border-radius: 5px;
-  border-left: 2px solid var(--muted);
-}
-.bomb-status.carried { border-left-color: #f0b429; }
-.bomb-status.dropped { border-left-color: #ffd166; }
-.bomb-status.planted { border-left-color: #ff3b30; }
-.bomb-status.defused { border-left-color: #4cc94c; }
-.bomb-chip {
-  font-size: 9px; font-weight: 700; letter-spacing: .04em;
-  padding: 1px 4px; border-radius: 3px; background: #3a3a36; color: var(--ink);
-}
-.bomb-what { color: var(--muted); }
-.bomb-who { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bomb-site { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* A death after the round was already decided — a failed save. Dimmed,
    because it did not change the result, but marked, because it cost a gun. */
@@ -356,7 +353,7 @@ ul.feed li.post { background: #1b1a18; opacity: .8; }
   gap: 12px;
 }
 
-/* ---- header: identity, score, bomb ---- */
+/* ---- header: identity, score ---- */
 .bcast-top {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
@@ -387,8 +384,6 @@ ul.feed li.post { background: #1b1a18; opacity: .8; }
   display: flex; flex-direction: column; align-items: center; gap: 3px;
   font-size: 11px; color: var(--muted); min-width: 92px;
 }
-.bcast-bomb { justify-self: end; min-width: 0; }
-.bcast-bomb .hint { margin: 0; }
 
 /* ---- body: team | stage | team ---- */
 .bcast-body {
@@ -414,6 +409,17 @@ ul.feed li.post { background: #1b1a18; opacity: .8; }
   color: var(--ink); font-variant-numeric: tabular-nums;
 }
 .team.mirror .team-alive { margin-left: 0; margin-right: auto; }
+
+/* Which side the roster is on the map. The badge names it, and the rule under
+   the header repeats the map's colour so it can be matched without reading. */
+.team { --side: var(--line); }
+.team.side-t { --side: var(--t); }
+.team.side-ct { --side: var(--ct); }
+.team.side-t .team-head, .team.side-ct .team-head { border-bottom: 2px solid var(--side); }
+.side-badge {
+  align-self: center; font-size: 10px; font-weight: 700; letter-spacing: .05em;
+  padding: 2px 6px; border-radius: 4px; color: #0d0d0d; background: var(--side);
+}
 
 .roster { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
 .pcard {

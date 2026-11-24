@@ -1,9 +1,12 @@
-import { ArmorIcon, BombIcon, KitIcon, NADE_ICONS, weaponIcon } from "./icons";
+import { GameIcon } from "./icons";
+import { GEAR, NADES, weaponFile } from "../equipment";
 import { byScoreboard, type LiveStat } from "../stats";
 import type { Loadout, Payload, Player, Team } from "../types";
 
 interface Props {
   team: Team;
+  /** Side this round: 2 = T, 3 = CT. Undefined before the first round loads. */
+  side?: number;
   payload: Payload;
   colors: Record<string, string>;
   selected: string[];
@@ -52,8 +55,10 @@ function Health({ hp }: { hp: number }) {
 }
 
 function Equipment({ loadout }: { loadout: Loadout }) {
-  const PrimaryIcon = loadout.primary ? weaponIcon(loadout.primary, "primary") : null;
-  const SecondaryIcon = loadout.secondary ? weaponIcon(loadout.secondary, "secondary") : null;
+  // A weapon the lookup has not met still shows its name; it only loses the
+  // picture, which is the failure that stays readable.
+  const primaryFile = loadout.primary ? weaponFile(loadout.primary) : undefined;
+  const secondaryFile = loadout.secondary ? weaponFile(loadout.secondary) : undefined;
 
   return (
     <div className="kit">
@@ -65,32 +70,34 @@ function Equipment({ loadout }: { loadout: Loadout }) {
             : "No armour"
         }
       >
-        <ArmorIcon helmet={loadout.helmet} size={11} />
+        <GameIcon file={loadout.helmet ? GEAR.armorHelmet : GEAR.armor} height={11} />
       </span>
-      {loadout.kit && <span className="tag-kit" title="Defuse kit"><KitIcon size={11} /></span>}
-      {loadout.bomb && <span className="tag-c4" title="Carrying the C4"><BombIcon size={11} /></span>}
+      {loadout.kit && <span className="tag-kit" title="Defuse kit"><GameIcon file={GEAR.kit} height={11} /></span>}
+      {loadout.bomb && <span className="tag-c4" title="Carrying the C4"><GameIcon file={GEAR.bomb} height={11} /></span>}
 
       <span className="guns">
-        {PrimaryIcon
+        {loadout.primary
           ? <span className="gun" title={loadout.primary}>
-              <PrimaryIcon size={13} />{short(loadout.primary)}
+              {primaryFile && <GameIcon file={primaryFile} height={11} />}
+              {short(loadout.primary)}
             </span>
           : <span className="muted">—</span>}
-        {SecondaryIcon && (
+        {loadout.secondary && (
           <span className="gun sidearm" title={loadout.secondary}>
-            <SecondaryIcon size={12} />
+            {secondaryFile
+              ? <GameIcon file={secondaryFile} height={11} />
+              : short(loadout.secondary)}
           </span>
         )}
       </span>
 
       <span className="nades">
         {[...loadout.nades].map((code, i) => {
-          const nade = NADE_ICONS[code];
+          const nade = NADES[code];
           if (!nade) return <span key={`${code}-${i}`} className="nade muted">?</span>;
-          const { Icon, color, title } = nade;
           return (
-            <span key={`${code}-${i}`} className="nade" style={{ color }} title={title}>
-              <Icon size={11} />
+            <span key={`${code}-${i}`} className="nade" style={{ color: nade.color }} title={nade.title}>
+              <GameIcon file={nade.file} height={12} />
             </span>
           );
         })}
@@ -112,9 +119,12 @@ function Equipment({ loadout }: { loadout: Loadout }) {
  * map.
  */
 export default function TeamPanel({
-  team, payload, colors, selected, alive, equip, stats, mirror = false,
+  team, side, payload, colors, selected, alive, equip, stats, mirror = false,
   onToggle, onToggleTeam,
 }: Props) {
+  // The map colours by side and these rows colour by player, so the header
+  // is where the two meet: it says which side this roster is on the map.
+  const sideName = side === 2 ? "T" : side === 3 ? "CT" : null;
   const byId = new Map(payload.players.map((p) => [p.id, p]));
   const nameOf = (id: string) => byId.get(id)?.name ?? id;
   // Re-sorted every frame, so the board reorders itself as the match plays.
@@ -125,8 +135,13 @@ export default function TeamPanel({
   const living = members.filter((p) => alive.has(p.id)).length;
 
   return (
-    <section className={`team ${mirror ? "mirror" : ""}`}>
+    <section className={`team ${mirror ? "mirror" : ""} ${sideName ? `side-${sideName.toLowerCase()}` : ""}`}>
       <header className="team-head">
+        {sideName && (
+          <span className="side-badge" title={sideName === "T" ? "Terrorists" : "Counter-Terrorists"}>
+            {sideName}
+          </span>
+        )}
         <button type="button" className="team-btn" onClick={() => onToggleTeam(team.id)}>
           {team.name}
         </button>
