@@ -45,10 +45,12 @@ notebook.
 | `packages/round-collector/` | Go. Command-line wrapper around the collector. |
 | `packages/analytics/` | Go. Match statistics from one demo or many: weapon kills, opening kills, clutches, X-vs-Y conversion. |
 | `packages/demo-analytics/` | Go. Command-line wrapper around analytics. |
+| `packages/clip-list/` | Go. Picks moments worth recording (openings, multikills, clutches) and writes them as clip lists for the recording laptop. See `docs/clip-capture.md`. |
+| `packages/clip-overlay/` | Go. Draws the player's keys and mouse buttons over recorded clips (ASS script, burnt in with FFmpeg). |
 | `packages/api/` | Go. Small HTTP server: Steam login. Talks to Postgres. |
 | `packages/web/` | TypeScript + React. The viewer and the home page. |
 | `playground/python/…/demo_output_processor/` | Python. Turns CSVs into `movement.json`. |
-| `scripts/` | `dev.sh` — runs the whole site locally. |
+| `scripts/` | `dev.sh` — runs the whole site locally. `clips/record-clips.ps1` records clips on the Windows laptop. |
 | `docs/` | Output format and deployment, both worth reading before changing either. |
 | `assets/radar/` | Map images. Committed; copied into the web build. |
 
