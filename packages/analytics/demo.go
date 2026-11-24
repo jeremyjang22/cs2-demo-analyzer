@@ -3,9 +3,6 @@ package analytics
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 
 	demoinfocs "github.com/markus-wa/demoinfocs-golang/v5/pkg/demoinfocs"
 	"github.com/markus-wa/demoinfocs-golang/v5/pkg/demoinfocs/msg"
@@ -13,22 +10,22 @@ import (
 	"github.com/jeremyjang22/cs2-demo-analyzer/packages/collector"
 )
 
-// FromDemo parses a .dem directly into a Match, writing nothing. It is the
+// FromDemo parses a .dem or .dem.zst directly into a Match, writing nothing. It is the
 // path for analysing a pile of demos you have no other use for: the same
 // numbers as LoadDir on that demo's output folder, without the ~20 MB of CSV
 // per demo in between. It costs a full parse, though, so a demo that is
 // already parsed is better read with LoadDir.
 func FromDemo(path string) (*Match, error) {
-	f, err := os.Open(path)
+	f, err := collector.OpenDemo(path)
 	if err != nil {
-		return nil, fmt.Errorf("open demo: %w", err)
+		return nil, err
 	}
 	defer f.Close()
 
 	parser := demoinfocs.NewParser(f)
 	defer parser.Close()
 
-	m := &Match{Name: strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))}
+	m := &Match{Name: collector.DemoName(path)}
 	parser.RegisterNetMessageHandler(func(h *msg.CDemoFileHeader) { m.Map = h.GetMapName() })
 	// parser.TickRate() is unusable before parsing starts; ServerInfo carries
 	// the real value. Same source round-collector records in its manifest.

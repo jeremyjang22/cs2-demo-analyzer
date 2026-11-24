@@ -67,7 +67,10 @@ func TestNameTeamsLeavesAnEvenSplitUnnamed(t *testing.T) {
 func TestParseTeamDefs(t *testing.T) {
 	names := map[uint64]string{1: "Solitude", 2: "beter", 3: "twin", 4: "twin"}
 
-	defs, err := ParseTeamDefs([]string{"us = solitude, 2 ,999"}, names)
+	defs, warnings, err := ParseTeamDefs([]string{"us = solitude, 2 ,999"}, names)
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %v, want none", warnings)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,9 +78,26 @@ func TestParseTeamDefs(t *testing.T) {
 		t.Errorf("def = %+v, want us = {1, 2, 999}", d)
 	}
 
+	// A team with nobody in these demos, or a name that could be two people,
+	// cannot be resolved at all.
 	for _, bad := range []string{"no-equals", "us=", "us=nobody", "us=twin"} {
-		if _, err := ParseTeamDefs([]string{bad}, names); err == nil {
+		if _, _, err := ParseTeamDefs([]string{bad}, names); err == nil {
 			t.Errorf("ParseTeamDefs(%q) succeeded, want an error", bad)
 		}
+	}
+}
+
+// A pool names everyone who plays for the team; a sub who missed every demo in
+// this set is a correct entry, not an error.
+func TestParseTeamDefsWarnsAboutAPlayerWhoIsNotInTheseDemos(t *testing.T) {
+	defs, warnings, err := ParseTeamDefs([]string{"us=solitude,benched"}, map[uint64]string{1: "solitude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(defs[0].IDs) != 1 || !defs[0].IDs[1] {
+		t.Errorf("IDs = %v, want just solitude", defs[0].IDs)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], `"benched"`) {
+		t.Errorf("warnings = %v, want one naming the missing player", warnings)
 	}
 }

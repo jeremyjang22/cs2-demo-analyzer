@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	demoinfocs "github.com/markus-wa/demoinfocs-golang/v5/pkg/demoinfocs"
@@ -34,7 +33,7 @@ func main() {
 
 func run() (err error) {
 	var (
-		demoPath  = flag.String("demo", "", "path to the .dem file (required)")
+		demoPath  = flag.String("demo", "", "path to the .dem or .dem.zst file (required)")
 		outDir    = flag.String("out", "out", "output directory")
 		maxRounds = flag.Int("max-rounds", 0, "stop after N rounds (0 = all)")
 		quiet     = flag.Bool("quiet", false, "suppress per-round progress")
@@ -46,16 +45,17 @@ func run() (err error) {
 		return fmt.Errorf("-demo is required")
 	}
 
-	f, err := os.Open(*demoPath)
+	// A .dem.zst is decompressed as it is read, never unpacked to disk.
+	f, err := collector.OpenDemo(*demoPath)
 	if err != nil {
-		return fmt.Errorf("open demo: %w", err)
+		return err
 	}
 	defer f.Close()
 
 	parser := demoinfocs.NewParser(f)
 	defer parser.Close()
 
-	base := strings.TrimSuffix(filepath.Base(*demoPath), filepath.Ext(*demoPath))
+	base := collector.DemoName(*demoPath)
 	dir := filepath.Join(*outDir, base)
 
 	sink, err := csvsink.New(dir, csvsink.Meta{

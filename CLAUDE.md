@@ -83,6 +83,7 @@ go run ./demo-analytics -team "us=name,name,steamid" ../out
                                  # ^ follow one team across demos; the list is
                                  #   a player pool, not a fixed five
 go run ./demo-analytics ../data/a.dem ../data/b.dem   # or straight from .dem
+go run ./demo-analytics "C:/team demos"     # or a folder of .dem / .dem.zst, left in place
 go run ./demo-analytics -web web/public/data ../out
                                  # ^ also writes each demo's analytics.json for
                                  #   the web app's ?demo=<name>&view=analytics page

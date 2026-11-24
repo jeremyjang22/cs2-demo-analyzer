@@ -6,8 +6,8 @@
 //
 //	demo-analytics [-out <dir>] [-web <dir>] [-team "Name=player,player,..."] <input>...
 //
-// An input is a round-collector output folder, a folder of those, or a .dem
-// file. See docs/demo-analytics.md for what every number means.
+// An input is a round-collector output folder, a .dem or .dem.zst file, or a
+// folder of any of those. See docs/demo-analytics.md for what every number means.
 package main
 
 import (
@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/jeremyjang22/cs2-demo-analyzer/packages/analytics"
+	"github.com/jeremyjang22/cs2-demo-analyzer/packages/collector"
 )
 
 // teamFlags collects a repeatable -team flag.
@@ -46,7 +47,7 @@ func run() error {
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(),
 			"usage: demo-analytics [flags] <input>...\n\n"+
-				"An input is a round-collector output folder, a folder of those, or a .dem file.\n\n")
+				"An input is a round-collector output folder, a .dem or .dem.zst file, or a folder of those.\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -89,9 +90,12 @@ func run() error {
 		matches = append(matches, m)
 	}
 
-	defs, err := analytics.ParseTeamDefs(teams, names)
+	defs, warnings, err := analytics.ParseTeamDefs(teams, names)
 	if err != nil {
 		return err
+	}
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
 	}
 
 	report := analytics.NewReport()
@@ -125,11 +129,12 @@ func run() error {
 	return nil
 }
 
-func isDemoFile(path string) bool { return strings.EqualFold(filepath.Ext(path), ".dem") }
+func isDemoFile(path string) bool { return collector.IsDemoFile(path) }
 
 // expand turns the command line into one path per demo. A folder that is not
-// itself a demo's output is searched one level down, so `demo-analytics out`
-// picks up every parsed demo in it. The result is sorted within each folder so
+// itself a demo's output is searched one level down - for parsed output
+// folders and for .dem / .dem.zst files alike - so `demo-analytics out` picks
+// up every parsed demo, and a folder of recordings can be named as it is. The result is sorted within each folder so
 // the same inputs always produce the same fact-row order.
 func expand(args []string) ([]string, error) {
 	var out []string
@@ -145,12 +150,12 @@ func expand(args []string) ([]string, error) {
 		var found []string
 		for _, e := range entries {
 			p := filepath.Join(arg, e.Name())
-			if e.IsDir() && analytics.IsDemoDir(p) {
+			if (e.IsDir() && analytics.IsDemoDir(p)) || (!e.IsDir() && isDemoFile(p)) {
 				found = append(found, p)
 			}
 		}
 		if len(found) == 0 {
-			return nil, fmt.Errorf("%s holds no round-collector output", arg)
+			return nil, fmt.Errorf("%s holds no demos and no round-collector output", arg)
 		}
 		sort.Strings(found)
 		out = append(out, found...)

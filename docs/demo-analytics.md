@@ -12,12 +12,16 @@ go run ./demo-analytics ../out
 # a team across its demos; the pool can be larger than five
 go run ./demo-analytics -team "us=solitude,Titan4006,beter,76561198311308221" ../out
 
-# straight from recordings, nothing written in between
-go run ./demo-analytics -out ../out/_scrims ../data/scrim1.dem ../data/scrim2.dem
+# straight from recordings, nothing written in between - .dem or .dem.zst,
+# or a whole folder of them, left wherever they already are
+go run ./demo-analytics -out ../out/_scrims ../data/scrim1.dem ../data/scrim2.dem.zst
+go run ./demo-analytics -out ../out/_team "C:/path/to/team demo data"
 ```
 
-An input is a round-collector output folder, a folder of those, or a `.dem`
-file, in any mix. A parsed folder loads in milliseconds because only the small
+An input is a round-collector output folder, a `.dem` or `.dem.zst` file, or a
+folder of any of those, in any mix. A `.dem.zst` is decompressed as it is read
+and never unpacked to disk, so a team's demos can stay compressed in whatever
+folder they arrived in — there is no need to copy them into `data/`. A parsed folder loads in milliseconds because only the small
 tables are read — never `ticks.csv.gz`. A `.dem` costs a full parse (seconds to
 a minute) and produces byte-identical output to its parsed folder. Output goes
 to `out/_analytics/` unless `-out` says otherwise.

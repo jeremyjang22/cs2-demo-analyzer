@@ -5,6 +5,7 @@ go 1.26
 require (
 	github.com/golang/geo v0.0.0-20230421003525-6adc56603217
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/klauspost/compress v1.18.0
 	github.com/markus-wa/demoinfocs-golang/v5 v5.2.0
 )
 

@@ -135,18 +135,24 @@ type TeamDef struct {
 // ParseTeamDefs resolves "Name=player,player,..." specs. A player is a
 // steamid64, or a name matched case-insensitively against names - which is
 // every name seen across the demos being analysed.
-func ParseTeamDefs(specs []string, names map[uint64]string) ([]TeamDef, error) {
+//
+// A name that matches nobody is a warning, not an error: a pool lists everyone
+// who plays for the team, and a sub who sat out every demo in this particular
+// set is still a correct entry. A typo reads the same way, which is why it is
+// reported rather than dropped silently. Only a team left with no players at
+// all, or an ambiguous name, stops the run.
+func ParseTeamDefs(specs []string, names map[uint64]string) (defs []TeamDef, warnings []string, err error) {
 	byName := make(map[string][]uint64, len(names))
 	for id, n := range names {
 		byName[strings.ToLower(n)] = append(byName[strings.ToLower(n)], id)
 	}
 
-	defs := make([]TeamDef, 0, len(specs))
+	defs = make([]TeamDef, 0, len(specs))
 	for _, spec := range specs {
 		name, list, ok := strings.Cut(spec, "=")
 		name = strings.TrimSpace(name)
 		if !ok || name == "" {
-			return nil, fmt.Errorf("team %q: want Name=player,player,...", spec)
+			return nil, nil, fmt.Errorf("team %q: want Name=player,player,...", spec)
 		}
 		def := TeamDef{Name: name, IDs: make(map[uint64]bool)}
 		for _, tok := range strings.Split(list, ",") {
@@ -161,19 +167,19 @@ func ParseTeamDefs(specs []string, names map[uint64]string) ([]TeamDef, error) {
 			ids := byName[strings.ToLower(tok)]
 			switch len(ids) {
 			case 0:
-				return nil, fmt.Errorf("team %q: no player named %q in these demos", name, tok)
+				warnings = append(warnings, fmt.Sprintf("team %q: no player named %q in these demos", name, tok))
 			case 1:
 				def.IDs[ids[0]] = true
 			default:
-				return nil, fmt.Errorf("team %q: %d players are named %q; use a steamid", name, len(ids), tok)
+				return nil, nil, fmt.Errorf("team %q: %d players are named %q; use a steamid", name, len(ids), tok)
 			}
 		}
 		if len(def.IDs) == 0 {
-			return nil, fmt.Errorf("team %q: no players listed", name)
+			return nil, nil, fmt.Errorf("team %q: none of its players are in these demos", name)
 		}
 		defs = append(defs, def)
 	}
-	return defs, nil
+	return defs, warnings, nil
 }
 
 // nameTeams gives each of a match's two teams the key it is aggregated under.
