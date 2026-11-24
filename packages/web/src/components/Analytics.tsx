@@ -8,7 +8,7 @@ import {
   type Analytics as Data, type Cell, type ClutchRow, type Filter, type OpeningRow,
   type PlantFilter, type ResultFilter, type SideFilter, type Tally,
 } from "../analytics";
-import { HOME_HREF, viewerHref } from "../route";
+import { HOME_HREF, startersHref, viewerHref } from "../route";
 
 interface Props {
   /** Folder name under public/data (locally) or under data/ in R2. */
@@ -378,6 +378,7 @@ export default function Analytics({ demo }: Props) {
           <nav className="view-tabs">
             <a href={viewerHref(demo)}>Replay</a>
             <a aria-current="page">Analytics</a>
+            <a href={startersHref(demo)}>Starters</a>
           </nav>
         </div>
         <div className="bcast-score">

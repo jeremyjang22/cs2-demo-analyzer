@@ -674,3 +674,152 @@ button.an-bar-row:focus-visible { outline: 2px solid var(--ct); outline-offset: 
 .pager select:hover, .pager button:hover:not(:disabled) { border-color: var(--muted); }
 .pager select:focus-visible, .pager button:focus-visible { outline: 2px solid var(--ct); outline-offset: 2px; }
 .pager-at { font-variant-numeric: tabular-nums; }
+/* ================= starters page =====================================
+   One player's rounds stacked from round start. Reuses the broadcast shell:
+   controls where a team panel would be, the round list on the other side. */
+.st-title { display: flex; align-items: baseline; gap: 10px; font-size: 13px; }
+.st-title b { font-size: 17px; }
+.st-t { color: var(--t); font-weight: 600; }
+.st-ct { color: var(--ct); font-weight: 600; }
+.st-totals {
+  justify-self: end; display: flex; gap: 14px; font-size: 12px; color: var(--muted);
+}
+.st-totals b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.st-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.st-field { display: flex; flex-direction: column; gap: 5px; font-size: 11px; color: var(--muted); }
+.st-field select {
+  font: inherit; font-size: 12px; padding: 5px 6px; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+}
+.st-now dl {
+  display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; margin: 0;
+  font-size: 12px; color: var(--ink-2);
+}
+.st-now dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); }
+
+.st-canvas { border-radius: 10px; display: block; background: var(--surface); }
+.st-play { display: flex; align-items: center; gap: 10px; }
+.st-play input[type="range"] { flex: 1; }
+.st-clock { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.st-rounds { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.st-rounds-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.st-rounds-head .feed-h { margin: 0; }
+.st-rounds ul {
+  list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px;
+  max-height: calc(100vh - 200px); overflow-y: auto;
+}
+.st-rounds li { display: flex; align-items: center; gap: 2px; }
+.st-rounds li > button:first-child {
+  flex: 1; min-width: 0; display: grid; grid-template-columns: 8px 52px 14px 22px 1fr auto;
+  align-items: center; gap: 6px; padding: 3px 6px; text-align: left; cursor: pointer;
+  background: transparent; border: 1px solid transparent; border-radius: 5px;
+  color: var(--ink-2); font: inherit; font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.st-rounds li.focus > button:first-child, .st-rounds li > button:hover { border-color: var(--line); background: var(--surface); }
+.st-rounds li.off > button:first-child { opacity: 0.35; }
+.st-rounds .st-cmp {
+  flex: none; width: 24px; padding: 3px 0; cursor: pointer; font-size: 12px;
+  background: transparent; color: var(--muted); border: 1px solid transparent; border-radius: 5px;
+}
+.st-rounds .st-cmp[aria-pressed="true"] { color: var(--ink); border-color: var(--ct); background: #1d2a3a; }
+.st-pick {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 6px 8px; border: 1px solid var(--ct); border-radius: 6px; font-size: 12px;
+}
+.st-pick a { color: var(--ink); text-decoration: none; }
+.st-pick a:hover { text-decoration: underline; }
+.st-pick button { background: none; border: 0; color: var(--muted); cursor: pointer; }
+.st-rl { color: var(--ink); }
+.st-w { color: #4cc94c; font-weight: 600; }
+.st-l { color: #ff5a4a; font-weight: 600; }
+.st-o { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-d { color: var(--muted); }
+
+/* ================= compare page ======================================
+   Two rounds side by side, one shared clock underneath. Each pane is the
+   replay's own renderer, so the stage styles above apply unchanged. */
+.cmp-align { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.cmp-actions { justify-self: end; }
+.cmp-btn {
+  padding: 5px 10px; font: inherit; font-size: 12px; cursor: pointer;
+  background: transparent; color: var(--ink-2); border: 1px solid var(--line); border-radius: 6px;
+}
+.cmp-btn:hover:not(:disabled) { border-color: var(--muted); color: var(--ink); }
+.cmp-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.cmp-panes { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+.cmp-pane { min-width: 0; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.cmp-pane > * { align-self: stretch; }
+.cmp-pane > .stage { align-self: center; }
+.cmp-pick { display: flex; align-items: center; gap: 6px; }
+.cmp-pick select {
+  min-width: 0; font: inherit; font-size: 12px; padding: 5px 6px; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+}
+.cmp-pick select:first-of-type { flex: 1; }
+.cmp-badge {
+  flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 11px; font-weight: 700; color: var(--plane);
+}
+.cmp-a { background: #f2c94c; }
+.cmp-b { background: #7fd6ff; }
+.cmp-open { flex: none; font-size: 12px; color: var(--muted); text-decoration: none; }
+.cmp-open:hover { color: var(--ink); }
+.cmp-info {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px;
+  font-size: 12px; color: var(--ink-2); min-height: 20px;
+}
+.cmp-info b { color: var(--ink); font-size: 14px; }
+.cmp-alive { margin-left: auto; color: var(--ink); font-variant-numeric: tabular-nums; }
+.cmp-warn { color: #ffc148; flex-basis: 100%; }
+.cmp-feed { min-height: 60px; }
+.cmp-feed ul.feed li { font-size: 11px; padding: 3px 6px; }
+.cmp-bottom {
+  display: flex; flex-direction: column; gap: 8px;
+  border-top: 1px solid var(--line); padding-top: 10px;
+}
+
+/* ================= pros section ======================================
+   Same shell as the home page: a pro is a card, a pro's page is filters
+   over the demos they appear in, grouped by map. */
+.pros-link {
+  display: flex; align-items: baseline; gap: 12px; margin: 0 0 22px;
+  padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface); color: var(--ink); text-decoration: none; font-size: 13px;
+}
+.pros-link:hover { border-color: var(--muted); }
+.pros-link b { font-size: 15px; }
+.pros-link span[aria-hidden] { margin-left: auto; color: var(--muted); }
+
+.pro-card .pro-name { font-size: 18px; font-weight: 600; }
+.pro-card.empty { opacity: 0.55; }
+.pro-maps { display: flex; flex-wrap: wrap; gap: 4px; font-size: 11px; }
+.pro-chip {
+  padding: 2px 7px; border-radius: 10px; background: #2c2c2a; color: var(--ink-2);
+}
+
+.pro-filters { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin-bottom: 18px; }
+.pro-map { margin-bottom: 26px; }
+.pro-map-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-bottom: 8px; }
+.pro-map-head .home-h2 { margin: 0; }
+.pro-map-head .muted { font-size: 12px; }
+.pro-study { margin-left: auto; display: flex; gap: 10px; font-size: 13px; color: var(--ink-2); }
+.pro-study a {
+  color: var(--ink); text-decoration: none; padding: 4px 10px;
+  border: 1px solid var(--ct); border-radius: 6px; background: #1d2a3a;
+}
+.pro-study a:hover { background: #24364c; }
+.pro-table td, .pro-table th { padding: 5px 10px 5px 0; }
+.pro-table tbody tr { border-top: 1px solid var(--line); }
+.pro-links { display: flex; gap: 10px; justify-content: flex-end; }
+.pro-links a { color: var(--muted); text-decoration: none; }
+.pro-links a:hover { color: var(--ink); }
+
+.kind {
+  display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px;
+  border: 1px solid var(--line); color: var(--ink-2); width: fit-content;
+}
+.kind-pug { border-color: #4a5a3a; color: #b9d68f; }
+.kind-match { border-color: #6b5520; color: #f2c94c; }

@@ -34,21 +34,59 @@ export interface Timeline {
   duration: number;
 }
 
+/** Seconds of empty clock between one game and the next on a merged timeline. */
+export const GAME_GAP = 10;
+
+/**
+ * Lay every round on one clock.
+ *
+ * `t0` counts from the first round of the round's OWN demo, so in a payload
+ * merged from several demos every game starts at zero. Taken as-is, five games
+ * land on top of each other: chapterAt finds game one's round wherever the
+ * clocks collide, and the other games' rounds become unreachable. So games are
+ * laid end to end in demo order, each starting GAME_GAP after the last one
+ * ends. A single-demo payload is unchanged.
+ */
 export function buildTimeline(payload: Payload): Timeline {
-  const chapters = Object.entries(payload.rounds)
-    .map(([key, meta]) => ({
-      key,
-      meta,
-      start: meta.t0,
-      decided: meta.t0 + meta.dur,
-      end: meta.t0 + chapterLength(meta),
-    }))
-    .sort((a, b) => a.start - b.start);
+  const byDemo = new Map<number, Array<[string, RoundMeta]>>();
+  for (const entry of Object.entries(payload.rounds)) {
+    const dm = entry[1].dm ?? 0;
+    const list = byDemo.get(dm);
+    if (list) list.push(entry); else byDemo.set(dm, [entry]);
+  }
+
+  const chapters: Chapter[] = [];
+  let offset = 0;
+  for (const dm of [...byDemo.keys()].sort((a, b) => a - b)) {
+    const game = byDemo.get(dm)!
+      .map(([key, meta]) => ({
+        key,
+        meta,
+        start: offset + meta.t0,
+        decided: offset + meta.t0 + meta.dur,
+        end: offset + meta.t0 + chapterLength(meta),
+      }))
+      .sort((a, b) => a.start - b.start);
+    chapters.push(...game);
+    if (game.length) offset = game[game.length - 1].end + GAME_GAP;
+  }
 
   return {
     chapters,
     duration: chapters.length ? chapters[chapters.length - 1].end : 0,
   };
+}
+
+/**
+ * Absolute clock time for a moment inside one round, held inside that round.
+ *
+ * Seeking a renderer to `chapter.start + sec` shows that round only while sec
+ * is within its length; past the end, the clock would cross into the gap
+ * before the NEXT round and chapterAt would move on to it. Anything that pins
+ * a renderer to one round (the compare view) seeks through this instead.
+ */
+export function timeInRound(chapter: Chapter, sec: number): number {
+  return chapter.start + Math.max(0, Math.min(sec, chapterLength(chapter.meta)));
 }
 
 /**

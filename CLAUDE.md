@@ -97,6 +97,17 @@ cd src/demo_output_processor
 python export_movement.py --demo foo                        # elsewhere
 # --hz changes the sample rate (default 4), --out the destination,
 # --merge combines several demos into one payload.
+# --kind pug|match (plus optional --event, --date, --title) writes info.json
+# beside the payload: what the demo cannot say about itself. The Pros section
+# filters on it. It is declared, never guessed; edit info.json to correct it.
+
+# --- the Pros section
+# A pro is an entry in packages/web/src/pros.json: a slug, a name, and EVERY
+# steamid they play on (pros pug on alternates). Which demos a pro is in is
+# worked out by index-demos from each roster - never tagged by hand - so a pro
+# match lands on every catalogued player's page from one export. Publish one
+# payload per demo: the starters view combines a set in the browser, so a
+# merged export is not needed for any filter.
 
 # --- web
 cd packages/web

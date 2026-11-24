@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildTimeline, chapterAt, chapterLength, clampTime, isPostround, scoreBefore,
-  secWithin, seekToRound, stepRound,
+  GAME_GAP, buildTimeline, chapterAt, chapterLength, clampTime, isPostround, scoreBefore,
+  secWithin, seekToRound, stepRound, timeInRound,
 } from "./timeline";
 import type { Payload, RoundMeta } from "./types";
 
@@ -24,6 +24,38 @@ describe("buildTimeline", () => {
   it("orders chapters and measures the match", () => {
     expect(tl.chapters.map((c) => c.meta.n)).toEqual([1, 2, 3]);
     expect(tl.duration).toBe(250);
+  });
+
+  // Each demo's t0 counts from its own first round, so a merged payload has
+  // every game starting at zero. Before this, the games sat on top of each
+  // other and the replay could only ever reach rounds of the first one.
+  it("lays merged games end to end", () => {
+    const merged = {
+      rounds: {
+        "0:1": round(1, 0, 40, 1, 0),
+        "0:2": round(2, 100, 30, 1, 1),
+        "1:1": { ...round(1, 0, 50, 0, 1), dm: 1 },
+        "1:2": { ...round(2, 90, 20, 0, 2), dm: 1 },
+      },
+    } as unknown as Payload;
+    const m = buildTimeline(merged);
+    expect(m.chapters.map((c) => c.key)).toEqual(["0:1", "0:2", "1:1", "1:2"]);
+    const second = 130 + GAME_GAP;
+    expect(m.chapters[2].start).toBe(second);
+    expect(m.duration).toBe(second + 110);
+    expect(chapterAt(m, second + 10)!.key).toBe("1:1");
+  });
+});
+
+describe("timeInRound", () => {
+  // Past a round's end the clock would cross into the next round's freeze
+  // time, and a renderer pinned to one round would jump to the next.
+  it("holds inside the round", () => {
+    const r2 = tl.chapters[1];
+    expect(timeInRound(r2, 10)).toBe(110);
+    expect(timeInRound(r2, 999)).toBe(130);
+    expect(timeInRound(r2, -5)).toBe(100);
+    expect(chapterAt(tl, timeInRound(r2, 999))!.meta.n).toBe(2);
   });
 });
 
