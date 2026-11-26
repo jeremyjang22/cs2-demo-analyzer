@@ -96,10 +96,10 @@ if (( want_api )); then
     exit 1
   fi
 
-  # Parsed, not sourced. `source .env` executes the file as shell, and a Neon
+  # Parsed, not sourced. `source .env` executes the file as shell, and a
   # connection string contains "&" — so the line
   #
-  #     DATABASE_URL=postgresql://...?sslmode=require&channel_binding=require
+  #     DATABASE_URL=postgresql://...?search_path=public&sslmode=require
   #
   # is read as an assignment BACKGROUNDED by the &, which runs it in a subshell
   # and leaves the variable unset in this one. It fails as "DATABASE_URL is

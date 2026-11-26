@@ -14,16 +14,28 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 if [[ ! -f .env ]]; then
-  echo "no .env here — copy .env.example and fill in both Neon URLs" >&2
+  echo "no .env here — copy .env.example and fill in both URLs" >&2
   exit 1
 fi
 
-# set -a exports every variable defined while it is on, which is what makes
-# them visible to the atlas child process.
-set -a
-# shellcheck disable=SC1091
-source .env
-set +a
+# Parsed, not sourced, for the reason scripts/dev.sh gives: `source .env` runs
+# the file as shell, and the "&" in a connection string's query
+# (?search_path=public&sslmode=require) backgrounds the assignment into a
+# subshell, leaving the variable empty here. Each value is read as a literal.
+while IFS= read -r line || [[ -n "$line" ]]; do
+  line="${line%$'\r'}"                     # a CRLF .env, from a Windows editor
+  case "$line" in ''|'#'*) continue ;; esac
+  [[ "$line" != *=* ]] && continue
+  key="${line%%=*}"
+  key="${key// /}"
+  value="${line#*=}"
+  sq="'"
+  case "$value" in
+    '"'*'"') value="${value:1:${#value}-2}" ;;
+    "$sq"*"$sq") value="${value:1:${#value}-2}" ;;
+  esac
+  export "$key=$value"
+done < .env
 
 for v in DATABASE_URL DATABASE_DEV_URL; do
   if [[ -z "${!v:-}" ]]; then
@@ -32,4 +44,4 @@ for v in DATABASE_URL DATABASE_DEV_URL; do
   fi
 done
 
-exec atlas "$@" --env neon
+exec atlas "$@" --env db

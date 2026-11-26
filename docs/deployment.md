@@ -1,6 +1,6 @@
 # Deployment
 
-Repo to production: GitHub Actions builds and gates, Neon holds the database,
+Repo to production: GitHub Actions builds and gates, Supabase holds the database,
 Northflank runs the API container, Cloudflare Workers serves everything the
 browser touches.
 
@@ -17,7 +17,7 @@ browser touches.
         │                           │
    push ghcr.io                wrangler deploy
         │                           │
-   atlas migrate ──► Neon           ▼
+   atlas migrate ──► Supabase       ▼
         │                     Cloudflare Worker
    northflank deploy                │
         │                    ┌──────┼──────┐
@@ -48,17 +48,31 @@ machine that has the demos.
 
 ## One-time setup
 
-### 1. Neon
+### 1. Supabase
 
-Two things CI needs, both from an existing project:
+Create a project in the **same region as the Northflank service** (both are
+`us-east-2` today); every sign-in is a round trip between them. On the create
+form, **untick Enable Data API** and leave GitHub unconnected: the Go API is
+the only client, and Atlas, not Supabase, owns the migrations. Keep the
+generated database password in a password manager — it is shown once.
 
-- **`NEON_PROJECT_ID`** — Project settings → General.
-- **`NEON_API_KEY`** — Account settings → API keys.
+Then **Connect → Direct → Session pooler** gives the one connection string
+everything uses: `postgresql://postgres.<ref>:<password>@aws-1-<region>.pooler.supabase.com:5432/postgres`.
 
-Also grab the **direct** connection string for the production branch — the
-endpoint *without* `-pooler`. Migrations need real session state that a
-connection pooler does not provide, and this is the single most common way to
-get a confusing failure here.
+- **Not the direct connection** (`db.<ref>.supabase.co`): IPv6-only on the free
+  plan, and GitHub's runners are IPv4.
+- **Not the transaction pooler** (port 6543): it hands a connection to another
+  client between transactions, which breaks pgx's prepared-statement cache
+  ("prepared statement already exists") and the session state Atlas needs.
+
+For Atlas (the GitHub secret and your local `.env`), append
+`?search_path=public&sslmode=require`, which keeps it out of Supabase's own
+schemas. Create the tables once with `./migrate.sh migrate apply` from
+`packages/api`; after that `deploy-api.yml` applies new migrations.
+
+The free plan **pauses a project after seven days with no activity**. Restore
+it from the dashboard; `/api/health` reports the database unreachable until
+then.
 
 ### 2. GHCR
 
@@ -100,7 +114,7 @@ digest it is handed:
 
   | Variable | Value |
   |---|---|
-  | `DATABASE_URL` | Neon **pooled** URL (the app pools; migrations do not) |
+  | `DATABASE_URL` | Supabase **session pooler** URL, port 5432 (see above) |
   | `SESSION_KEY` | `openssl rand -hex 32` — rotating it logs everyone out |
   | `PUBLIC_URL` | `https://<your-domain>/api` |
   | `WEB_ORIGIN` | `https://<your-domain>` |
@@ -133,8 +147,7 @@ on the dashboard sidebar.
 
 | Secret | Used by |
 |---|---|
-| `NEON_API_KEY` | PR branches |
-| `NEON_DATABASE_URL_DIRECT` | production migrations |
+| `DATABASE_URL_MIGRATIONS` | production migrations: the session pooler URL with `?search_path=public&sslmode=require` |
 | `NORTHFLANK_API_KEY` | API rollout |
 | `CLOUDFLARE_API_TOKEN` | Worker publish |
 | `CLOUDFLARE_ACCOUNT_ID` | Worker publish |
@@ -144,8 +157,6 @@ keeping them out of the secret store means you can read them in a log:
 
 | Variable | Example |
 |---|---|
-| `NEON_PROJECT_ID` | `dawn-rain-12345678` |
-| `NEON_PRODUCTION_BRANCH` | `main` (optional; defaults to `main`) |
 | `NORTHFLANK_PROJECT_ID` | `cs2-demo-analyzer` |
 | `NORTHFLANK_SERVICE_ID` | `api` |
 | `API_HEALTH_URL` | `https://<your-domain>/api/health` (optional) |
@@ -160,9 +171,9 @@ unattended, which is a valid choice — just make it on purpose.
 | File | Trigger | Does |
 |---|---|---|
 | `ci.yml` | every push and PR | Go build/vet/test/gofmt, web test + build, Docker build without pushing |
-| `deploy-api.yml` | main, on API/collector/Dockerfile paths | test → image → GHCR → migrate Neon → Northflank → poll `/health` |
+| `deploy-api.yml` | main, on API/collector/Dockerfile paths | test → image → GHCR → migrate Supabase → Northflank → poll `/health` |
 | `deploy-web.yml` | main, on web/radar paths | test → build → `wrangler deploy` |
-| `neon-pr-branch.yml` | PRs touching migrations | branch prod's database, apply migrations to it, validate, comment; delete on close |
+| `migrations.yml` | PRs touching migrations | apply every migration to an empty Postgres 17 on the runner, validate `atlas.sum` |
 
 Both deploy workflows also accept `workflow_dispatch`, which is how you roll
 back: re-run the deploy from the last good commit.
@@ -250,15 +261,21 @@ logins is not a real cost.
 ## When it breaks
 
 **`required flag(s) "dev-url" not set`** — Atlas is resolving `atlas.hcl`'s
-`neon` env, which declares a dev database. The workflows pass explicit
-`--dir`/`--url`/`--revisions-schema` flags instead of `--env neon` precisely to
+`db` env, which declares a dev database. The workflows pass explicit
+`--dir`/`--url`/`--revisions-schema` flags instead of `--env db` precisely to
 avoid this. If you add an Atlas step, do the same.
 
-**`connected database is not clean: found schema neon_auth`** — Neon puts a
-`neon_auth` schema in every database. `--allow-dirty` is correct on a fresh
-branch (the PR workflow passes it) and correct on a first production apply. It
-is not correct as a permanent fixture on production: once the revision table
-exists you want to know if something unexpected appears.
+**`connected database is not clean`** — the connection string is missing
+`?search_path=public`, so Atlas is looking at the whole database and finding
+Supabase's own schemas (`auth`, `storage`, ...). Add it rather than reaching
+for `--allow-dirty`.
+
+**`prepared statement "stmtcache_..." already exists`** — `DATABASE_URL` is
+the transaction pooler (port 6543). Use the session pooler, port 5432.
+
+**`/api/health` reports the database unreachable after a quiet week** — the
+free plan has paused the project. Restore it from the Supabase dashboard; it
+takes about a minute.
 
 **Login redirects but `/api/me` says unauthenticated** — `PUBLIC_URL` is
 probably the Northflank hostname rather than `https://<your-domain>/api`. Steam

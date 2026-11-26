@@ -1,0 +1,55 @@
+# Every migration is applied to a fresh database before it can merge.
+#
+# The point is the proof: "this migration does not apply" is a red PR instead
+# of a red deploy. The database is a Postgres container on the runner, the same
+# major version as production (Supabase, 17), so this needs no hosted database
+# and no secret. It replaced a workflow that branched production on Neon; what
+# that had and this does not is production's rows, which for a table of
+# sign-ins is not where a migration fails.
+name: migrations
+
+on:
+  pull_request:
+    paths:
+      - "packages/api/migrations/**"
+      - "packages/api/schema/schema.sql"
+      - ".github/workflows/migrations.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ariga/setup-atlas@v0
+
+      - name: apply every migration to an empty database
+        working-directory: packages/api
+        run: |
+          # The same flags as the production apply in deploy-api.yml, so a pass
+          # here means the same command will pass there.
+          atlas migrate apply \
+            --dir "file://migrations" \
+            --url "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable&search_path=public" \
+            --revisions-schema public
+
+      - name: check the migration directory is intact
+        working-directory: packages/api
+        # atlas.sum is a checksum over the migration files. Editing an already
+        # applied migration instead of adding a new one breaks it, and that is
+        # a mistake worth catching before merge rather than at deploy.
+        run: atlas migrate validate --dir "file://migrations"
