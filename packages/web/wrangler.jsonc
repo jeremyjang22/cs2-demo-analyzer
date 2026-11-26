@@ -12,15 +12,20 @@
     "binding": "ASSETS",
     // The app is one page and reads its state from the query string, so any
     // path that is not a real file should still hand back index.html rather
-    // than a 404. Note the Worker's own routes are matched first — see
-    // worker/index.ts — so /api and /data never reach this.
+    // than a 404.
     "not_found_handling": "single-page-application",
-    // Static assets are otherwise served BEFORE the Worker runs, so a payload
-    // that slipped into dist/data (prune-data is what normally stops that)
-    // would go out to anyone, skipping the access check in worker/access.ts.
-    // Routing /data/* through the Worker unconditionally makes that check
-    // the only way a payload leaves.
-    "run_worker_first": ["/data/*"]
+    // Assets are matched BEFORE the Worker runs, and in single-page mode a
+    // browser navigation to ANY path that is not a file gets index.html -
+    // the Worker never sees it. So every route the Worker owns is listed:
+    //
+    //   /api/*   the Steam login link is a navigation. Without this it got
+    //            index.html at /api/auth/steam/login, whose relative script
+    //            URLs then 404 under /api/auth/steam/ - a white page, while
+    //            curl (no browser headers) reached the Worker and looked fine.
+    //   /data/*  a payload that slipped into dist/data (prune-data normally
+    //            stops that) would otherwise go out to anyone, skipping the
+    //            access check in worker/access.ts.
+    "run_worker_first": ["/api/*", "/data/*"]
   },
 
   // SESSION_KEY is a secret, not a var: `npx wrangler secret put SESSION_KEY`,
