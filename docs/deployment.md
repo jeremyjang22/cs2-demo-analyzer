@@ -193,11 +193,14 @@ A destructive change breaks that and has to be split across two deploys:
 ## Publishing demo data
 
 ```sh
-cd packages/web
-python ../../playground/python/src/demo_output_processor/export_movement.py --demo nukepug
+cd packages
+go run ./demo-export -visibility private -owner <steamid> ../data/nukepug.dem
+cd web
 npm run upload-data -- --dry-run     # see what would go
 npm run upload-data nukepug          # or omit the name for everything
 ```
+
+`go run ./demo-export -upload ...` does both steps in one.
 
 Before uploading, check each demo's `info.json` says what you mean:
 `visibility` and `owner` decide who sees it (below), `date` orders and filters
