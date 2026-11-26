@@ -119,6 +119,13 @@ digest it is handed:
   | `PUBLIC_URL` | `https://<your-domain>/api` |
   | `WEB_ORIGIN` | `https://<your-domain>` |
   | `PORT` | `8080` |
+  | `STEAM_API_KEY` | optional — [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey); names and avatars at sign-in |
+
+  Without `STEAM_API_KEY` sign-in still works, but OpenID returns only the
+  steamid, so that is the name everyone is shown. With it, each sign-in reads
+  the player's current Steam name and avatar; a failed lookup keeps whatever
+  was stored and never blocks the sign-in. The key goes in a query string, so
+  the API rebuilds every lookup error without the URL - keep it that way.
 
   `PUBLIC_URL` ends in `/api` on purpose: it is what the API hands Steam as the
   OpenID realm and return URL, and Steam sends the browser there — so it has to
