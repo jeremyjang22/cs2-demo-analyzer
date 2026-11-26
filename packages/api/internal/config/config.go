@@ -15,9 +15,10 @@ import (
 type Config struct {
 	Port string
 
-	// DatabaseURL is the pooled Neon connection. Migrations need the direct
-	// one instead - a pooler cannot hold the session state they require - so
-	// Atlas reads its own variable rather than this.
+	// DatabaseURL is Supabase's session pooler (port 5432). Not the
+	// transaction pooler (6543): pgx caches prepared statements on each
+	// connection, and a transaction pooler hands that connection to someone
+	// else between transactions - "prepared statement already exists".
 	DatabaseURL string
 
 	// SessionKey signs the login cookie. Rotating it logs everyone out, which

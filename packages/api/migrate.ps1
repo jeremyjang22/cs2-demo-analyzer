@@ -22,7 +22,7 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 if (-not (Test-Path .env)) {
-    Write-Error "no .env here - copy .env.example and fill in both Neon URLs"
+    Write-Error "no .env here - copy .env.example and fill in both URLs"
 }
 
 Get-Content .env | ForEach-Object {
@@ -43,5 +43,5 @@ foreach ($v in @("DATABASE_URL", "DATABASE_DEV_URL")) {
     }
 }
 
-& atlas @Args --env neon
+& atlas @Args --env db
 exit $LASTEXITCODE

@@ -25,22 +25,27 @@ resolves the config to empty strings and fails with the misleading
 .\migrate.ps1 migrate diff <name>    # PowerShell
 ```
 
-Both source `.env`, check the URLs are populated, and append `--env neon`.
+Both read `.env` line by line (never `source` it: the `&` in a connection
+string backgrounds the assignment), check the URLs are populated, and append
+`--env db`.
 
-### Neon specifics
+### Supabase specifics
 
-Three things about Neon that the generic Atlas docs do not cover:
+Three things the generic Atlas docs do not cover:
 
-- **Use the direct endpoint, not `-pooler`.** Migrations need real session state
-  that a connection pooler does not provide.
-- **`DATABASE_DEV_URL` needs `search_path=public`.** Neon provisions its own
-  `neon_auth` schema in every database, and Atlas refuses a dev database that is
-  not clean. Scoping the connection is what makes it acceptable; setting
-  `schemas = ["public"]` in `atlas.hcl` alone is not enough, because the clean
-  check looks at the whole connected database.
-- **The first `migrate apply` needs `--allow-dirty`.** Same `neon_auth` schema,
-  this time on the target. It is outside the `public` schema Atlas manages, so
-  proceeding is correct. Later applies do not need the flag.
+- **Use the session pooler, port 5432.** The direct host is IPv6-only on the
+  free plan, and the transaction pooler (6543) cannot hold the session state
+  migrations need. `.env.example` has the exact shape.
+- **End the URL in `?search_path=public`.** Supabase provisions its own schemas
+  (`auth`, `storage`, ...) in every database. Scoping the connection keeps
+  Atlas looking at ours alone, so it neither reports the database dirty nor
+  proposes to drop what it does not own; `schemas = ["public"]` in
+  `atlas.hcl` alone is not enough, because the clean check looks at the whole
+  connected database.
+- **`migrate diff` needs Docker running.** `DATABASE_DEV_URL` is
+  `docker://postgres/17/dev`: Atlas starts a throwaway Postgres 17, the same
+  major version as production, for each diff. `apply` and `status` do not use
+  it.
 
 `revisions_schema = "public"` keeps Atlas's own bookkeeping table alongside the
 tables it manages, rather than in a dedicated schema the scoped connection

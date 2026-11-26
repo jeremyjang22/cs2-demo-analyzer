@@ -7,24 +7,24 @@ variable "url" {
   default = getenv("DATABASE_URL")
 }
 
-// A scratch database Atlas uses to compute diffs. Neon's free tier allows
-// extra databases on the same project; point this at one that holds nothing
-// you care about, because Atlas will drop and recreate objects in it.
+// A scratch database Atlas uses to compute diffs: it drops and recreates
+// objects in it, so it must never be the real one. docker://postgres/17/dev
+// (see .env.example) has Atlas start a throwaway container per run, the same
+// major version as production, so no hosted database is spent on it.
 variable "dev_url" {
   type    = string
   default = getenv("DATABASE_DEV_URL")
 }
 
-env "neon" {
+env "db" {
   src = "file://schema/schema.sql"
   url = var.url
   dev = var.dev_url
 
-  // Manage only the public schema. Neon provisions its own "neon_auth" schema
-  // in every database, and Atlas refuses to use a dev database that is not
-  // clean ("connected database is not clean: found schema neon_auth").
-  // Scoping here rather than dropping it keeps Neon's own feature intact, and
-  // stops a diff from ever proposing to delete something Atlas does not own.
+  // Manage only the public schema. Supabase fills every database with its own
+  // (auth, storage, realtime, extensions, ...), and a diff that saw them would
+  // propose deleting things Atlas does not own. The connection strings end in
+  // ?search_path=public for the same reason.
   schemas = ["public"]
   migration {
     dir = "file://migrations"

@@ -140,7 +140,11 @@ Six services. The browser only ever talks to the first one.
 - **Cloudflare R2** — file storage holding the finished `movement.json`
   payloads. Uploaded by hand, never by CI.
 - **Northflank** — runs the Go API in a container, around the clock.
-- **Neon** — Postgres. Currently just a row per person who signed in.
+- **Supabase** — Postgres, and only Postgres: the API connects to it directly
+  and none of Supabase's client libraries or its Data API are used. Currently
+  just a row per person who signed in. (Moved from Neon in November 2026 over
+  free-tier usage; the free plan pauses a project after a week with no
+  activity, and the dashboard wakes it.)
 - **GitHub Actions** — runs the tests on every push, and deploys on `main`.
 - **Steam** — handles login. We never see a password.
 
@@ -170,16 +174,19 @@ deployed site gets the new code immediately but keeps the old data until you
 run `npm run upload-data`. Make new fields optional in `types.ts` so an old
 payload degrades instead of crashing.
 
-**Neon gives you two connection strings; migrations need the direct one.**
-The pooled URL is the one to use at runtime, but Atlas needs a real session to
-diff a schema and will fail confusingly against the pooler. `DATABASE_DEV_URL`
-is a separate throwaway database that Atlas drops and recreates on every diff —
-never point it at the real one. `packages/api/.env.example` says which is which.
+**Supabase gives you three connection strings; use the session pooler.**
+Port 5432 on `*.pooler.supabase.com`, for the API and for migrations alike. The
+direct host is IPv6-only on the free plan, which GitHub's runners cannot reach,
+and the transaction pooler (6543) breaks both pgx's prepared statements and the
+session Atlas needs. Strings for Atlas end in `?search_path=public` so it never
+sees Supabase's own schemas. `DATABASE_DEV_URL` is `docker://postgres/17/dev`,
+a throwaway container per diff — never point it at the real database.
+`packages/api/.env.example` has the exact shapes.
 
-**Don't `source` the `.env` file in a shell script.** Neon connection strings
-contain `&`, which the shell reads as "run this in the background" — the
-variable silently ends up empty. Parse the file line by line instead;
-`scripts/dev.sh` shows how.
+**Don't `source` the `.env` file in a shell script.** Connection strings
+contain `&` (`?search_path=public&sslmode=require`), which the shell reads as
+"run this in the background" — the variable silently ends up empty. Parse the
+file line by line instead; `scripts/dev.sh` and `migrate.sh` show how.
 
 **Routing is by query parameter, and has to stay that way.** `vite.config.ts`
 sets `base: "./"`, so every asset URL is relative. A page served at

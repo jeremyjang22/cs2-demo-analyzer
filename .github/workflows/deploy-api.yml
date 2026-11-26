@@ -1,4 +1,4 @@
-# main → GHCR → Neon migrations → Northflank.
+# main → GHCR → Supabase migrations → Northflank.
 #
 # The order matters and is not arbitrary: the schema is migrated BEFORE the new
 # image rolls out, so the code that needs a column never starts before the
@@ -98,11 +98,14 @@ jobs:
       - name: apply migrations
         working-directory: packages/api
         env:
-          # The DIRECT Neon endpoint, not -pooler. Migrations need real session
-          # state that a connection pooler does not provide.
-          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL_DIRECT }}
+          # Supabase's SESSION pooler (port 5432), ending in
+          # ?search_path=public&sslmode=require. Session, because migrations
+          # need real session state the transaction pooler (6543) does not
+          # keep; the pooler rather than the direct host, because the direct
+          # host is IPv6-only and these runners are not.
+          DATABASE_URL: ${{ secrets.DATABASE_URL_MIGRATIONS }}
         run: |
-          # Flags rather than `--env neon`, deliberately. atlas.hcl declares a
+          # Flags rather than `--env db`, deliberately. atlas.hcl declares a
           # dev database for computing diffs, and resolving that env here would
           # demand a DATABASE_DEV_URL that production has no reason to own.
           # --revisions-schema mirrors atlas.hcl's revisions_schema = "public",
