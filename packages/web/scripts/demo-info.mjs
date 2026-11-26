@@ -104,6 +104,36 @@ export function localDate(mtime) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+/**
+ * The index to publish: what is already published, with this upload's demos
+ * added or replaced and any `unlist`ed ones removed.
+ *
+ * The bucket is shared by every machine that publishes, and the index
+ * describes the bucket - not one machine's disk. Rebuilding it from local
+ * folders alone meant an upload from a second machine published an index of
+ * one demo, and the Worker, which serves nothing the index does not list,
+ * hid every other. So only the demos actually uploaded take their entries from
+ * the local build; everything else keeps the entry that was already live.
+ *
+ * Returns the merged entries (by name, as index-demos writes them) and what
+ * changed, for the upload to report.
+ */
+export function mergeIndex(published, local, uploading, unlist = []) {
+  const byName = new Map(published.map((d) => [d.name, d]));
+  const removed = unlist.filter((n) => byName.delete(n));
+  const fresh = new Map(local.map((d) => [d.name, d]));
+  const added = [], replaced = [];
+  for (const name of uploading) {
+    const entry = fresh.get(name);
+    if (!entry) continue; // no movement.json, so not uploaded either
+    (byName.has(name) ? replaced : added).push(name);
+    byName.set(name, entry);
+  }
+  const kept = [...byName.keys()].filter((n) => !added.includes(n) && !replaced.includes(n));
+  const demos = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return { demos, added, replaced, kept, removed };
+}
+
 /** "nukepug.dem" or "x.dem.zst" → "nukepug" / "x"; null for anything else. */
 export function demoNameOf(file) {
   const m = /^(.*)\.dem(\.zst)?$/i.exec(file);

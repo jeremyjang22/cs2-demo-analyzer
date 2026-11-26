@@ -205,9 +205,19 @@ go run ./demo-export -visibility private -owner <steamid> ../data/nukepug.dem
 cd web
 npm run upload-data -- --dry-run     # see what would go
 npm run upload-data nukepug          # or omit the name for everything
+npm run upload-data -- --unlist x    # take a demo off the site
 ```
 
 `go run ./demo-export -upload ...` does both steps in one.
+
+**Any machine can publish.** The index describes the bucket, not one disk, so
+an upload merges into the published index: demos already there stay listed,
+and only the ones uploaded now are added or replaced. A clone with a single
+demo in `public/data` publishes that one without touching the rest. If the
+published index cannot be read the upload stops before sending anything —
+`--fresh` is for a bucket that has never had one. An unlisted demo is no
+longer served (the Worker serves only what the index lists), though its files
+stay in the bucket.
 
 Before uploading, check each demo's `info.json` says what you mean:
 `visibility` and `owner` decide who sees it (below), `date` orders and filters
