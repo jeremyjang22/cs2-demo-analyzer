@@ -15,18 +15,22 @@ smaller readable one, in stages, and each stage writes its result to disk.**
 
 ```
 data/foo.dem            670 MB   the recording CS2 made
-   │  round-collector (Go)
-   ▼
-out/foo/                 19 MB   11 CSVs + manifest.json (ticks.csv is gzipped)
-   │  export_movement.py (Python)
-   ▼
-public/data/foo/         1.2 MB  movement.json, resampled to 4 samples/second
+   │  demo-export (Go) ──── -csv ───►  out/foo/   19 MB  11 CSVs + manifest.json
+   ▼                                   (round-collector writes the same folder)
+public/data/foo/         1.2 MB  movement.json + analytics.json, 4 samples/second
    │  fetched by the browser
    ▼
 packages/web                     the page that draws it
 ```
 
-Every output directory carries a `manifest.json` beside the CSVs holding the
+`demo-export` parses once and builds the payload as the rounds stream past, in
+about ten seconds a match. The CSV folder is the stage for notebooks and for
+re-exporting without re-parsing; until November 2026 it was the only route,
+with Python building the payload from it. The Go builder (`packages/payload`)
+replaced that only after matching the Python's output exactly on every demo to
+hand — `TestMatchesPythonExport` keeps it that way.
+
+Every CSV folder carries a `manifest.json` beside the CSVs holding the
 schema version, a row count per table, and the full column list of each — read
 it first when you are unsure what a run produced, rather than opening a 19 MB
 CSV. Note that `ticks.csv` is written **gzipped**, so it is `zcat`, not `head`.
@@ -41,15 +45,17 @@ notebook.
 
 | Path | What lives there |
 |---|---|
-| `packages/collector/` | Go. Reads a `.dem`, writes CSVs. The parsing core. |
-| `packages/round-collector/` | Go. Command-line wrapper around the collector. |
+| `packages/collector/` | Go. Reads a `.dem` and hands each round to a sink. The parsing core. `csvsink` writes the CSV folder; `csvsource` reads one back as the same rounds. |
+| `packages/payload/` | Go. Builds `movement.json` from rounds, as a sink — from a `.dem` or a CSV folder alike. |
+| `packages/demo-export/` | Go. A demo to the web app in one step: `movement.json`, `analytics.json`, `info.json`, optionally published. |
+| `packages/round-collector/` | Go. Command-line wrapper around the collector that writes the CSV folder alone. |
 | `packages/analytics/` | Go. Match statistics from one demo or many: weapon kills, opening kills, clutches, X-vs-Y conversion. |
 | `packages/demo-analytics/` | Go. Command-line wrapper around analytics. |
 | `packages/clip-list/` | Go. Picks moments worth recording (openings, multikills, clutches) and writes them as clip lists for the recording laptop. See `docs/clip-capture.md`. |
 | `packages/clip-overlay/` | Go. Draws the player's keys and mouse buttons over recorded clips (ASS script, burnt in with FFmpeg). |
 | `packages/api/` | Go. Small HTTP server: Steam login. Talks to Postgres. |
 | `packages/web/` | TypeScript + React. The viewer and the home page. |
-| `playground/python/…/demo_output_processor/` | Python. Turns CSVs into `movement.json`. |
+| `playground/python/…/demo_output_processor/` | Python. Notebook helpers over the CSVs (`demo_data.py`), and the original `movement.json` exporter — kept as the reference the Go builder is checked against, and for `--merge`. |
 | `scripts/` | `dev.sh` — runs the whole site locally. `clips/record-clips.ps1` records clips on the Windows laptop. |
 | `docs/` | Output format and deployment, both worth reading before changing either. |
 | `assets/radar/` | Map images. Committed; copied into the web build. |
@@ -72,7 +78,22 @@ go test ./collector/ -run TestName
 go vet ./...
 gofmt -l .                       # lists unformatted files; should print nothing
 
-# --- parse a demo into CSVs (a full match takes a few minutes)
+# --- a demo to the web app, in one step (about ten seconds a match)
+cd packages
+go run ./demo-export ../data/foo.dem             # -> web/public/data/foo/
+go run ./demo-export -visibility private -owner <steamid> -date 2026-08-14 ../data/foo.dem
+go run ./demo-export -kind pug -visibility public "C:/demos/1-604132bd.dem.zst"
+go run ./demo-export ../out/foo                  # re-export a parsed folder, no re-parse
+go run ./demo-export -csv ../out ../data/foo.dem # also write the CSV folder, same pass
+go run ./demo-export -upload ../data/foo.dem     # ...and publish it (npm run upload-data)
+# The info flags are export_movement.py's and set-info's, with the same rules,
+# and a re-export keeps what an earlier one declared. Undeclared is private.
+
+# --- the payload checked against the Python exporter (needs parsed demos)
+PAYLOAD_GOLDEN=<folder of <demo>/movement.json from export_movement.py> \
+  go test ./payload -run Python  # reads ../out; PAYLOAD_OUT overrides
+
+# --- parse a demo into CSVs alone (a full match takes a few minutes)
 cd packages
 go run ./round-collector -demo ../data/foo.dem -out ../out
 go run ./round-collector -demo ../data/foo.dem -out ../out -max-rounds 2
@@ -90,7 +111,7 @@ go run ./demo-analytics -web web/public/data ../out
                                  # ^ also writes each demo's analytics.json for
                                  #   the web app's ?demo=<name>&view=analytics page
 
-# --- turn those CSVs into what the web app reads
+# --- the Python exporter: the reference, and the only one that merges demos
 cd playground/python && uv sync          # one-time after clone
 cd src/demo_output_processor
 ./venv/Scripts/python.exe export_movement.py --demo foo     # Windows
@@ -202,6 +223,12 @@ ADR - in the exporter's `stats` (`player_stats`), the viewer's live board
 credited them: m0NESY's 31-kill pug read 32 from a post-round bomb death. This
 CHANGED THE MEANING of `payload.stats`; a payload exported earlier still holds
 the old count until it is re-exported.
+
+**The payload has two builders, and only one is live.** `packages/payload`
+(Go) is what `demo-export` and the coming upload worker run;
+`movement_payload.py` is frozen as the reference it was checked against. A
+change to the payload goes in Go. Change the Python too only to keep
+`TestMatchesPythonExport` meaningful, and re-run it when you do.
 
 **Changing the payload means re-exporting and re-uploading.** The web app and
 the demo data deploy separately. If you add a field to `movement.json`, the

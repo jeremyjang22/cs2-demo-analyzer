@@ -29,12 +29,16 @@ VITE_API_TARGET=https://<service>.code.run npm run dev
 
 ## Getting data in
 
-From `playground/python/src/demo_output_processor`:
+From `packages/` (the Go module root):
 
 ```sh
-python export_movement.py --demo nukepug        # -> public/data/nukepug/movement.json
-python export_movement.py --demo a b --merge pro-player   # several demos, one payload
+go run ./demo-export ../data/nukepug.dem   # -> public/data/nukepug/{movement,analytics}.json
+go run ./demo-export ../out/nukepug        # the same, from a folder parsed earlier
 ```
+
+`demo-export` takes the same `-visibility`/`-owner`/`-kind`/`-date` flags as
+`set-info`. Merging several demos into one payload is still the Python
+exporter's (`export_movement.py --merge`), and nothing in the app needs it.
 
 Radar images live in `public/radar/`, copied from `assets/radar/`. Both are
 gitignored under `public/data/`; the radar PNGs are committed.
