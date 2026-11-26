@@ -188,10 +188,49 @@ npm run upload-data -- --dry-run     # see what would go
 npm run upload-data nukepug          # or omit the name for everything
 ```
 
+Before uploading, check each demo's `info.json` says what you mean:
+`visibility` and `owner` decide who sees it (below), `date` orders and filters
+the tables, and `"sample": true` makes it what signed-out visitors are shown.
+`npm run set-info` writes any of these without re-exporting. `index-demos`
+refuses to build an index with an invalid one, so a typo cannot publish
+something more widely than intended.
+
 Keys mirror local paths: `public/data/nukepug/movement.json` becomes
 `data/nukepug/movement.json` in the bucket, which is the same URL the app
 fetches in dev off Vite's static server. Nothing in the app knows the
 difference.
+
+### Who sees a demo
+
+Each demo's `info.json` declares `visibility` (`public`, `link`, `private` —
+the same words as the `demo_visibility` enum) and `owner` (a steamid), set with
+`export_movement.py --visibility ... --owner ...` or by editing the file.
+`index-demos` copies both into `index.json`, and the Worker
+(`worker/access.ts`) uses that one file to decide, per request:
+
+- a visitor who is not signed in sees the samples (`"sample": true`, which
+  must also be public) and nothing else, so `public` means every signed-in
+  account - the Pros section is for accounts, for now, and `signedOutMay` is
+  the one function to change when that loosens;
+- `/data/index.json` is answered per viewer, listing only what they may see;
+- a file inside a demo's folder is served only if the viewer may open it, and
+  otherwise answers 404 exactly like a demo that does not exist;
+- a demo with no declared visibility is private, a private demo with no owner
+  opens for nobody, and a demo missing from the index is not served at all.
+
+The Worker knows who is asking by verifying the API's `sid` cookie itself, so
+it needs the API's key as a secret — **the same value** Northflank has:
+
+```sh
+npx wrangler secret put SESSION_KEY
+```
+
+Without it every visitor reads as signed out and only the samples are
+served. Rotating `SESSION_KEY` therefore means setting it in both places.
+
+When changing access, upload before deploying a Worker that depends on the new
+fields: an index without them reads as all-private, which hides demos rather
+than leaking them, but hides them from you too.
 
 ## Why the proxy
 

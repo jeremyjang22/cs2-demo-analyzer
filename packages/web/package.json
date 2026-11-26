@@ -15,7 +15,8 @@
     "index-demos": "node scripts/index-demos.mjs",
     "deploy": "npm run build && wrangler deploy",
     "upload-data": "node scripts/upload-data.mjs",
-    "vendor-equipment": "node scripts/vendor-equipment.mjs"
+    "vendor-equipment": "node scripts/vendor-equipment.mjs",
+    "set-info": "node scripts/set-info.mjs"
   },
   "dependencies": {
     "react": "^19.2.0",

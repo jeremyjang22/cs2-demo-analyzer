@@ -52,6 +52,10 @@ makes a local deploy produce the same thing CI does.
 |---|---|
 | `src/route.ts` | which view the URL asks for — the whole router |
 | `src/stats.ts` | K/D/A and ADR as of a moment, and the scoreboard order |
+| `src/demoTable.ts` | the demo tables: whose numbers (the subject), result, filters, order; drawn by `components/DemoTable.tsx` on the home and pro pages |
+| `src/calendar.ts` | date arithmetic for the two-calendar date-range filter |
+| `src/useMe.ts` | who is signed in, asked once per page and shared |
+| `scripts/demo-info.mjs` | what an index entry holds: declared `info.json` checks, and the score / per-player lines measured from a payload |
 | `src/analytics.ts` | one game's analytics payload and the groupings its page draws; `?demo=<name>&view=analytics` |
 | `src/api.ts` | the backend as this app sees it: `/me`, login, logout |
 | `src/types.ts` | payload shape, mirrors `export_movement.py` |
