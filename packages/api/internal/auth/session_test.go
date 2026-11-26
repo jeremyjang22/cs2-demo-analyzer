@@ -52,3 +52,16 @@ func TestMalformedRejected(t *testing.T) {
 		}
 	}
 }
+
+// The Cloudflare Worker verifies this cookie too, without calling the API, to
+// decide who may read a private demo (packages/web/worker/session.ts). The two
+// implementations share no code, so they share this vector instead: the same
+// string is asserted in worker/session.test.ts. Change the format here and
+// that test is the one that tells you the Worker now locks everyone out.
+func TestEncodeMatchesWorkerVector(t *testing.T) {
+	const want = "76561198230376396.4102444800.ZmtrVcXaMOlnOiKp3AXxjOyXOc5dYnTacJd9GogvYRI"
+	got := Encode(key, Session{SteamID: 76561198230376396, Expires: time.Unix(4102444800, 0)})
+	if got != want {
+		t.Fatalf("Encode = %q, want %q", got, want)
+	}
+}

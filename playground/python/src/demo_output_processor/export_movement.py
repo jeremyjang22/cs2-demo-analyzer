@@ -3,13 +3,18 @@
     python export_movement.py --demo anubispug
     python export_movement.py --demo a b c --out ../../packages/web/public/data
 
-Writes <out>/<demo>/movement.json, and with --kind an info.json beside it
-holding what the demo itself cannot say: whether it is a pug or a pro match,
-and optionally the event, date and a readable title.
+Writes <out>/<demo>/movement.json, and an info.json beside it holding what
+the demo itself cannot say: who may see it once published (--visibility,
+--owner), whether it is a pug or a pro match (--kind), and optionally the
+event, date and a readable title.
 
-    python export_movement.py --demo-dir ../../out/1-604132bd-... --kind pug
-    python export_movement.py --demo falcons-vitality-m1 --kind match \
+    python export_movement.py --demo nukepug --visibility private --owner 7656119...
+    python export_movement.py --demo-dir ../../out/1-604132bd-... --kind pug --visibility public
+    python export_movement.py --demo falcons-vitality-m1 --kind match --visibility public \
         --event "IEM Example 2026" --date 2026-11-02 --title "Falcons vs Vitality, map 1"
+
+A demo published with no --visibility is private to nobody: the site fails
+closed rather than show ten people's match to the world by default.
 
 Unlike the standalone HTML generator, this
 keeps the data separate from the app that draws it: the radar images are
@@ -49,7 +54,16 @@ def main():
     parser.add_argument("--date", help="with --kind: when it was played, YYYY-MM-DD")
     parser.add_argument("--title", help="with --kind: a readable name for lists, in place of "
                                          "the folder name")
+    parser.add_argument("--visibility", choices=["public", "link", "private"],
+                        help="who may see it on the site: public (listed for everyone), link "
+                             "(anyone with the name, listed for the owner), private (owner "
+                             "only). Undeclared means private")
+    parser.add_argument("--owner", metavar="STEAMID",
+                        help="64-bit steamid of the account that owns it on the site; "
+                             "needed for link and private")
     args = parser.parse_args()
+    if args.owner and not (args.owner.isdigit() and len(args.owner) == 17):
+        parser.error(f"--owner wants a 64-bit steamid (17 digits), not {args.owner}")
     if (args.event or args.date or args.title) and not args.kind:
         parser.error("--event, --date and --title describe a demo; give --kind as well")
 
@@ -66,7 +80,7 @@ def main():
         path = out / "movement.json"
         path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
 
-        if args.kind:
+        if args.kind or args.visibility or args.owner:
             write_info(out / "info.json", args)
 
         positions = sum(len(r["x"]) for p in payload["players"] for r in p["rounds"])
@@ -82,8 +96,7 @@ def write_info(path: Path, args) -> None:
     one small file. Fields not given on this run keep their previous values.
     """
     info = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    info["kind"] = args.kind
-    for field in ("event", "date", "title"):
+    for field in ("kind", "event", "date", "title", "visibility", "owner"):
         value = getattr(args, field)
         if value:
             info[field] = value

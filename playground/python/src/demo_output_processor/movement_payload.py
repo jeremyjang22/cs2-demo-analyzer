@@ -472,6 +472,12 @@ def player_stats(demo_dirs) -> dict:
     suicides, which the scoreboard does not count either - and they have no
     killer to credit, only a victim who would otherwise pick up a death for
     leaving.
+
+    A suicide or a teamkill is a death for the victim but never a kill for the
+    "killer". Crediting it put a post-round bomb death into m0NESY's kills on
+    one FACEIT pug (32, where the kill feed shows 31 enemies). The game's own
+    board goes further and takes a kill away; FACEIT and HLTV just leave it
+    out, and so does this, so K/D/A here matches what those sites publish.
     """
     stats = {}
 
@@ -482,9 +488,12 @@ def player_stats(demo_dirs) -> dict:
 
     for demo_dir in demo_dirs:
         for row in demo_data.load_kills(demo_dir, phase=["live", "postround"]).itertuples():
-            bump(row.killer_steamid, "k")
+            enemy = (row.killer_steamid != row.victim_steamid
+                     and row.killer_team != row.victim_team)
+            if enemy:
+                bump(row.killer_steamid, "k")
+                bump(row.assister_steamid, "a")
             bump(row.victim_steamid, "d")
-            bump(row.assister_steamid, "a")
     return stats
 
 

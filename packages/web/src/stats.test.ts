@@ -29,6 +29,37 @@ const payload = {
 
 const tl = buildTimeline(payload);
 
+describe("statsUpTo: friendly fire", () => {
+  // a and b are teammates, c is the enemy.
+  const ff = {
+    players: [{ id: "a", team: 0 }, { id: "b", team: 0 }, { id: "c", team: 1 }],
+    rounds: { "0:1": round(1, 0, 100) },
+    kills: { "0:1": [kill(10, "a", "b", "c"), kill(20, "c", "c"), kill(30, "a", "c")] },
+    damage: { "0:1": [hit(5, "a", "b", 100), hit(25, "a", "c", 100)] },
+    stats: {},
+  } as unknown as Payload;
+  const s = statsUpTo(ff, buildTimeline(ff).chapters, 100);
+
+  // Caught on a real FACEIT pug: a post-round bomb death credited as a kill.
+  it("does not credit a teamkill or a suicide as a kill", () => {
+    expect(s.get("a")!.kills).toBe(1);
+    expect(s.get("c")!.kills).toBe(0);
+  });
+
+  it("still counts the death", () => {
+    expect(s.get("b")!.deaths).toBe(1);
+    expect(s.get("c")!.deaths).toBe(2);
+  });
+
+  it("gives no assist on a teamkill", () => {
+    expect(s.get("c")!.assists).toBe(0);
+  });
+
+  it("leaves damage to a teammate out of ADR", () => {
+    expect(s.get("a")!.damage).toBe(100);
+  });
+});
+
 describe("statsUpTo", () => {
   it("counts nothing before anything has happened", () => {
     const s = statsUpTo(payload, tl.chapters, 0);

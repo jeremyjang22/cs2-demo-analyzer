@@ -248,16 +248,34 @@ ul.feed li.post { background: #1b1a18; opacity: .8; }
   padding: 8px 4px 40px;
 }
 
-.home-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 24px;
-  flex-wrap: wrap;
-  padding-bottom: 22px;
-  margin-bottom: 26px;
-  border-bottom: 1px solid var(--line);
+/* ---- nav bar: the list pages' top, see components/NavBar.tsx ---- */
+.nav {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px 22px;
+  padding: 4px 0 14px; margin-bottom: 26px; border-bottom: 1px solid var(--line);
 }
+.nav-brand {
+  color: var(--ink); text-decoration: none;
+  font-size: 15px; font-weight: 600; letter-spacing: -0.01em;
+}
+.nav-tabs { display: flex; gap: 4px; margin-right: auto; }
+.nav-tabs a {
+  padding: 6px 12px; border-radius: 7px;
+  color: var(--muted); text-decoration: none; font-size: 13px;
+  transition: color 120ms, background 120ms;
+}
+.nav-tabs a:hover { color: var(--ink); }
+.nav-tabs a[aria-current="page"] {
+  color: var(--ink); background: var(--surface); box-shadow: inset 0 0 0 1px var(--ring);
+}
+.nav-brand:focus-visible, .nav-tabs a:focus-visible { outline: 2px solid var(--ct); outline-offset: 2px; }
+/* On a phone the name takes its own line, and the tabs and sign-in share the
+   next, so the tabs are never the thing that wraps. */
+@media (max-width: 640px) {
+  .nav-brand { flex-basis: 100%; }
+}
+
+.page-head { margin-bottom: 22px; }
+.intro { margin: 0 0 14px; }
 .home-title { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
 .home-tag { color: var(--muted); font-size: 13px; margin: 6px 0 0; max-width: 52ch; }
 .home-h2 {
@@ -266,6 +284,7 @@ ul.feed li.post { background: #1b1a18; opacity: .8; }
 }
 .home-foot { font-size: 11px; margin-top: 36px; }
 .home-empty { font-size: 13px; }
+.home-empty a { color: var(--ink); }
 .home-empty code, .home-foot code, .fatal code {
   background: var(--surface); border: 1px solid var(--line);
   border-radius: 4px; padding: 0.1em 0.35em; font-size: 0.9em;
@@ -293,17 +312,9 @@ ul.feed li.post { background: #1b1a18; opacity: .8; }
 .demo-card:hover { border-color: var(--muted); background: #201f1d; }
 .demo-card:focus-visible { outline: 2px solid var(--ct); outline-offset: 2px; }
 .demo-map { font-size: 15px; font-weight: 600; }
-.demo-name {
-  font-size: 11px; color: var(--muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 .demo-meta {
   display: flex; gap: 10px; margin-top: 7px;
   font-size: 11px; color: var(--ink-2); font-variant-numeric: tabular-nums;
-}
-.demo-size {
-  position: absolute; top: 13px; right: 14px;
-  font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums;
 }
 
 /* ---- steam auth ---- */
@@ -784,15 +795,6 @@ button.an-bar-row:focus-visible { outline: 2px solid var(--ct); outline-offset: 
 /* ================= pros section ======================================
    Same shell as the home page: a pro is a card, a pro's page is filters
    over the demos they appear in, grouped by map. */
-.pros-link {
-  display: flex; align-items: baseline; gap: 12px; margin: 0 0 22px;
-  padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px;
-  background: var(--surface); color: var(--ink); text-decoration: none; font-size: 13px;
-}
-.pros-link:hover { border-color: var(--muted); }
-.pros-link b { font-size: 15px; }
-.pros-link span[aria-hidden] { margin-left: auto; color: var(--muted); }
-
 .pro-card .pro-name { font-size: 18px; font-weight: 600; }
 .pro-card.empty { opacity: 0.55; }
 .pro-maps { display: flex; flex-wrap: wrap; gap: 4px; font-size: 11px; }
@@ -811,15 +813,159 @@ button.an-bar-row:focus-visible { outline: 2px solid var(--ct); outline-offset: 
   border: 1px solid var(--ct); border-radius: 6px; background: #1d2a3a;
 }
 .pro-study a:hover { background: #24364c; }
-.pro-table td, .pro-table th { padding: 5px 10px 5px 0; }
-.pro-table tbody tr { border-top: 1px solid var(--line); }
-.pro-links { display: flex; gap: 10px; justify-content: flex-end; }
-.pro-links a { color: var(--muted); text-decoration: none; }
-.pro-links a:hover { color: var(--ink); }
-
 .kind {
   display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px;
-  border: 1px solid var(--line); color: var(--ink-2); width: fit-content;
+  border: 1px solid var(--line); color: var(--ink-2); width: fit-content; white-space: nowrap;
 }
 .kind-pug { border-color: #4a5a3a; color: #b9d68f; }
 .kind-match { border-color: #6b5520; color: #f2c94c; }
+.kind-sample { border-color: #2f4a66; color: #9cc3f0; }
+.kind-private { border-style: dashed; }
+
+/* ================= demo tables ========================================
+   One person's games per table (DemoTable.tsx): yours on the home page, a
+   pro's on their page. The heading above names whose numbers they are. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+.list-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 2px; }
+.list-head .count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.subject { margin: 0 0 10px; font-size: 12px; color: var(--muted); }
+.subject b { color: var(--ink-2); font-weight: 600; }
+.signin {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 18px;
+  padding: 10px 14px; border: 1px dashed var(--line); border-radius: 10px;
+  color: var(--ink-2); font-size: 13px;
+}
+.signin .steam-btn { margin-left: auto; }
+
+.table-wrap { border: 1px solid var(--ring); border-radius: 10px; background: var(--surface); overflow: hidden; }
+table.demos { width: 100%; border-collapse: collapse; font-size: 13px; }
+.demos th {
+  text-align: left; font-weight: 500; font-size: 11px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap;
+  padding: 0; border-bottom: 1px solid var(--line);
+}
+.demos th:not(.sortable) { padding: 9px 12px; }
+.demos th button {
+  all: unset; box-sizing: border-box; display: block; width: 100%; padding: 9px 12px;
+  cursor: pointer; text-align: inherit;
+}
+.demos th button:hover { color: var(--ink-2); }
+.demos th button:focus-visible { outline: 2px solid var(--ct); outline-offset: -2px; }
+.demos th .arrow { display: inline-block; width: 12px; margin-left: 3px; color: var(--ink); }
+.demos th.num, .demos td.num { text-align: right; }
+.demos td { padding: 9px 12px; border-top: 1px solid var(--line); vertical-align: middle; }
+.demos tbody tr:first-child td { border-top: 0; }
+.demos td.num { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ink-2); }
+.demos td.stat { color: var(--ink); }
+.demos tr.row { cursor: pointer; transition: background 100ms; }
+.demos tr.row:hover td { background: #201f1d; }
+.demos .c-map { font-weight: 600; white-space: nowrap; }
+.demo-label {
+  display: block; max-width: 34ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--ink); text-decoration: none;
+}
+.demos tr.row:hover .demo-label { text-decoration: underline; text-decoration-color: var(--muted); text-underline-offset: 3px; }
+.demo-label .phone-map { display: none; }
+.tags { display: flex; gap: 5px; flex-wrap: wrap; }
+.result { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.result .wl { display: inline-block; width: 16px; font-weight: 700; }
+.wl-W { color: #b9d68f; }
+.wl-L { color: #e7837a; }
+.wl-D { color: var(--muted); }
+.demos .actions { text-align: right; white-space: nowrap; }
+.demos .actions a { color: var(--muted); text-decoration: none; font-size: 12px; margin-left: 12px; }
+.demos .actions a:hover { color: var(--ink); }
+.empty-row td { color: var(--muted); text-align: center; padding: 22px; }
+
+/* Phones: each game becomes two lines - map and name with the result, then
+   the type and length - and the secondary columns step aside. */
+@media (max-width: 640px) {
+  .demos thead { display: none; }
+  /* The table itself has to stop being one too: left as display:table it
+     sizes to its old columns and pushes the page wider than the phone. */
+  table.demos, .demos tbody { display: block; }
+  .demos tr.row {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px;
+    padding: 10px 12px; border-top: 1px solid var(--line);
+  }
+  .demos tr.row:first-child { border-top: 0; }
+  .demos tr.row td { border: 0; padding: 0; background: none; }
+  .demos tr.row td.sec, .demos tr.row td.c-map { display: none; }
+  .demos tr.row td.c-demo { grid-column: 1; grid-row: 1; }
+  .demos tr.row td.c-result { grid-column: 2; grid-row: 1; text-align: right; }
+  .demos tr.row td.c-length { grid-column: 2; grid-row: 2; font-size: 12px; color: var(--muted); }
+  .demo-label { max-width: none; }
+  .demo-label .phone-map { display: inline; color: var(--muted); }
+  .empty-row { display: block; }
+  .pro-study { margin-left: 0; }
+}
+
+/* ---- filters ---- */
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.filters select {
+  background: var(--surface); border: 1px solid var(--line); color: var(--ink);
+  border-radius: 6px; padding: 4px 8px; font: inherit; font-size: 12px; max-width: 100%;
+}
+.filters select.on { border-color: var(--ct); background: #1d2a3a; }
+.filters .clear { background: none; border: 0; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; padding: 4px; }
+.filters .clear:hover { color: var(--ink); }
+
+/* Date range: a dropdown holding two calendars, each with a typed field. */
+.daterange { position: relative; }
+.dr-btn {
+  position: relative; background: var(--surface); border: 1px solid var(--line); color: var(--ink);
+  border-radius: 6px; padding: 4px 26px 4px 8px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.dr-btn::after { content: "▾"; position: absolute; right: 8px; color: var(--muted); }
+.dr-btn.on { border-color: var(--ct); background: #1d2a3a; }
+.dr-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.dr-pop {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 20;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px; box-shadow: 0 14px 36px rgba(0, 0, 0, 0.55);
+}
+.dr-cals { display: flex; gap: 18px; }
+@media (max-width: 640px) { .dr-cals { flex-direction: column; gap: 12px; } }
+.dr-cal label {
+  display: grid; gap: 4px; margin-bottom: 8px; font-size: 11px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.dr-cal input {
+  background: var(--plane); border: 1px solid var(--line); color: var(--ink); border-radius: 6px;
+  padding: 5px 8px; font: 12px ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+.dr-cal input:focus { outline: none; border-color: var(--ct); }
+.dr-cal input.bad { border-color: #e7837a; }
+.dr-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; font-size: 12px; }
+.dr-nav {
+  width: 24px; height: 24px; background: none; border: 1px solid var(--line); color: var(--ink-2);
+  border-radius: 5px; cursor: pointer; font: inherit; line-height: 1;
+}
+.dr-nav:hover { color: var(--ink); border-color: var(--muted); }
+.dr-days { display: grid; grid-template-columns: repeat(7, 30px); gap: 2px 0; }
+.dr-days .dow { padding: 2px 0; font-size: 10px; color: var(--muted); text-align: center; }
+.day {
+  position: relative; height: 28px; background: none; border: 0; border-radius: 5px;
+  color: var(--ink-2); font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.day:hover { background: #2c2c2a; color: var(--ink); }
+.day.in { background: #1d2a3a; border-radius: 0; color: var(--ink); }
+.day.sel { background: var(--ct); color: #fff; }
+.day.today { box-shadow: inset 0 0 0 1px var(--muted); }
+.day.has::after, .dr-dot {
+  content: ""; display: inline-block; width: 4px; height: 4px; border-radius: 50%; background: #b9d68f;
+}
+.day.has::after { position: absolute; bottom: 3px; left: 50%; margin-left: -2px; }
+.day.sel.has::after { background: #fff; }
+.dr-foot {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-top: 10px; font-size: 11px; color: var(--muted);
+}
+.dr-actions { display: flex; gap: 6px; }
+.dr-done {
+  background: #1d2a3a; border: 1px solid var(--ct); color: var(--ink); border-radius: 6px;
+  padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer;
+}

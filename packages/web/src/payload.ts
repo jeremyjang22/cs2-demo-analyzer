@@ -17,7 +17,12 @@ export function loadPayload(demo: string): Promise<Payload> {
   if (!p) {
     p = fetch(`${import.meta.env.BASE_URL}data/${demo}/movement.json`)
       .then((r) => {
-        if (!r.ok) throw new Error(`movement.json for ${demo} not found (HTTP ${r.status})`);
+        // The Worker answers a private demo exactly like a missing one, so
+        // this cannot say which - only that signing in might be the fix.
+        if (r.status === 404) {
+          throw new Error(`${demo} is not available: it is not published, or needs you signed in to an account that can see it`);
+        }
+        if (!r.ok) throw new Error(`movement.json for ${demo} could not be loaded (HTTP ${r.status})`);
         return r.json();
       })
       .then((data: unknown) => {
@@ -29,6 +34,9 @@ export function loadPayload(demo: string): Promise<Payload> {
   }
   return p;
 }
+
+/** [kills, deaths, assists, roster, adr] - see DemoSummary.lines. */
+export type PlayerLine = [number, number, number, number, number];
 
 /** One entry from /data/index.json, written by scripts/index-demos.mjs. */
 export interface DemoSummary {
@@ -48,6 +56,25 @@ export interface DemoSummary {
   games?: number;
   /** Slugs of catalogued pros on the roster, matched by steamid at index time. */
   pros?: string[];
+  /**
+   * Who may see it, declared at export (--visibility). The deployed Worker
+   * filters the index by this, so a visitor is only ever sent entries they
+   * can open; a non-public one here means the viewer is its owner. Local dev
+   * serves the raw file and shows everything.
+   */
+  visibility?: "public" | "link" | "private";
+  /** Steamid of the account it belongs to on the site. */
+  owner?: string;
+  /** Declared as what signed-out visitors are shown. Always public. */
+  sample?: boolean;
+  /** Final score, [roster A, roster B]. Absent on merged payloads. */
+  score?: [number, number];
+  /**
+   * Every player's final line: steamid → [kills, deaths, assists, roster, adr].
+   * Kills leave out suicides and teamkills; ADR is enemy damage actually
+   * taken, per round. Absent on merged payloads and older indexes.
+   */
+  lines?: Record<string, PlayerLine>;
   map: string;
   rounds: number;
   players: number;

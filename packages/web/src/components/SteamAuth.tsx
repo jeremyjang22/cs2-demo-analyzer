@@ -1,12 +1,5 @@
-import { useEffect, useState } from "react";
-import { fetchMe, logout, steamProfileHref, LOGIN_HREF, type Me } from "../api";
-
-type State =
-  | { status: "loading" }
-  | { status: "out" }
-  | { status: "in"; me: Me }
-  /** The API could not be reached at all — distinct from being signed out. */
-  | { status: "down"; message: string };
+import { logout, steamProfileHref, LOGIN_HREF } from "../api";
+import { useMe } from "../useMe";
 
 /**
  * Sign in through Steam, or say who is signed in.
@@ -16,18 +9,7 @@ type State =
  * which sends the user to Steam and back for nothing.
  */
 export default function SteamAuth() {
-  const [state, setState] = useState<State>({ status: "loading" });
-
-  useEffect(() => {
-    const ac = new AbortController();
-    fetchMe(ac.signal)
-      .then((me) => setState(me ? { status: "in", me } : { status: "out" }))
-      .catch((e: Error) => {
-        if (e.name === "AbortError") return;
-        setState({ status: "down", message: e.message });
-      });
-    return () => ac.abort();
-  }, []);
+  const state = useMe();
 
   if (state.status === "loading") {
     return <div className="auth muted">…</div>;

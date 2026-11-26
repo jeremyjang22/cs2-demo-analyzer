@@ -100,6 +100,22 @@ python export_movement.py --demo foo                        # elsewhere
 # --kind pug|match (plus optional --event, --date, --title) writes info.json
 # beside the payload: what the demo cannot say about itself. The Pros section
 # filters on it. It is declared, never guessed; edit info.json to correct it.
+# --visibility public|link|private and --owner <steamid> go in the same file
+# and decide who the deployed site shows the demo to. UNDECLARED MEANS PRIVATE
+# TO NOBODY: a pro demo exported without --visibility public will not appear.
+
+# --- declare or backfill info.json without re-exporting
+cd packages/web
+npm run set-info -- nukepug --date 2026-08-14
+npm run set-info -- <demo> --kind pug --visibility public --sample
+                                 # ^ a sample is what signed-out visitors see;
+                                 #   it must be public, and index-demos refuses
+                                 #   to write an index otherwise
+npm run set-info -- --dates-from ../../data [--dry-run] [--force]
+                                 # ^ backfill dates from each .dem's modified
+                                 #   time. Only for games YOUR client recorded:
+                                 #   a downloaded FACEIT demo carries its
+                                 #   download day, not the day it was played
 
 # --- the Pros section
 # A pro is an entry in packages/web/src/pros.json: a slug, a name, and EVERY
@@ -163,6 +179,25 @@ filters for you. `docs/round-collector-schema.md` lists all five traps.
 order. Add a column at the **end**, never in the middle. A shifted column does
 not crash anything — it just silently puts the wrong data under every heading
 after it.
+
+**Demo access is enforced by the Worker, and only in production.** Each
+demo's `info.json` declares `visibility` and `owner`; `index-demos` copies them
+into `index.json`, and `worker/access.ts` filters the index and refuses
+payloads per viewer, reading the API's `sid` cookie itself with the same
+`SESSION_KEY` (a Worker secret). **Signed out, a visitor sees the samples and
+nothing else**: `public` means every signed-in account, and the Pros pages ask
+for a sign-in (`signedOutMay` in `access.ts` is the one place that decides).
+Local dev serves `public/data` straight off disk and shows everything; only the
+page-level gates apply there. The cookie format now lives in two languages,
+pinned by one shared test vector in `session_test.go` and `session.test.ts`.
+
+**A kill is an enemy kill.** Since November 2026 a suicide or teamkill is the
+victim's death but nobody's kill or assist, and damage to a teammate is not
+ADR - in the exporter's `stats` (`player_stats`), the viewer's live board
+(`stats.ts`) and the index (`demo-info.mjs`) alike. Before that, `stats.k`
+credited them: m0NESY's 31-kill pug read 32 from a post-round bomb death. This
+CHANGED THE MEANING of `payload.stats`; a payload exported earlier still holds
+the old count until it is re-exported.
 
 **Changing the payload means re-exporting and re-uploading.** The web app and
 the demo data deploy separately. If you add a field to `movement.json`, the

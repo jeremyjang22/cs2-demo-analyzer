@@ -81,10 +81,21 @@ for (const demo of demos) {
   uploads.push(["data/index.json", join(dataRoot, "index.json")]);
 }
 
+// Who each demo will be visible to, read back from the index just built, so
+// the line that says what is being published also says to whom.
+const { readFile } = await import("node:fs/promises");
+const access = new Map(
+  JSON.parse(await readFile(join(dataRoot, "index.json"), "utf8")).demos
+    .map((d) => [d.name, d.visibility === "public" ? "public"
+      : `${d.visibility}${d.owner ? ` to ${d.owner}` : ", NO OWNER"}`]),
+);
+
 for (const [key, file] of uploads) {
   const size = (await stat(file)).size;
   total += size;
-  console.log(`  ${key}  ${(size / 1024).toFixed(0)} KB`);
+  const demo = key.split("/")[1];
+  const who = key.endsWith("/movement.json") ? `  [${access.get(demo) ?? "?"}]` : "";
+  console.log(`  ${key}  ${(size / 1024).toFixed(0)} KB${who}`);
   if (dryRun) continue;
 
   // --remote targets the real bucket; without it wrangler writes to the local

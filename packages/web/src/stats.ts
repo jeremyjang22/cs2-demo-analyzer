@@ -54,6 +54,14 @@ export function statsUpTo(
   };
   for (const p of payload.players) get(p.id);
 
+  // A suicide or teamkill is the victim's death but nobody's kill, and damage
+  // to a teammate is not ADR: FACEIT and HLTV count neither, and neither does
+  // the exporter's final K/D/A (movement_payload.player_stats), so the board
+  // and the demo tables agree. Roster index is stable across the side swap.
+  const roster = new Map(payload.players.map((p) => [p.id, p.team]));
+  const friendly = (a: string, b: string) =>
+    a === b || (roster.get(a) !== undefined && roster.get(a) === roster.get(b));
+
   let roundsPlayed = 0;
 
   for (const chapter of chapters) {
@@ -66,15 +74,17 @@ export function statsUpTo(
 
     for (const kill of payload.kills[chapter.key] ?? []) {
       if (kill.t > cutoff) break;
-      if (kill.k) get(kill.k).kills++;
-      if (kill.a) get(kill.a).assists++;
+      if (kill.k && !friendly(kill.k, kill.v)) {
+        get(kill.k).kills++;
+        if (kill.a) get(kill.a).assists++;
+      }
       get(kill.v).deaths++;
     }
 
     for (const hit of payload.damage?.[chapter.key] ?? []) {
       if (hit.t > cutoff) break;
       // World damage — a fall, or the bomb — has nobody to credit.
-      if (hit.by) get(hit.by).damage += hit.hpt ?? 0;
+      if (hit.by && !friendly(hit.by, hit.v)) get(hit.by).damage += hit.hpt ?? 0;
     }
   }
 

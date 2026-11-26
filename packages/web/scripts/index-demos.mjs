@@ -15,6 +15,7 @@
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { infoProblems, playSummary } from "./demo-info.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dataRoot = join(here, "..", "public", "data");
@@ -41,16 +42,31 @@ try {
 }
 
 const demos = [];
+const problems = [];
+const undeclared = [];
+const orphaned = [];
 for (const entry of entries.filter((e) => e.isDirectory())) {
   const file = join(dataRoot, entry.name, "movement.json");
   const size = (await stat(file).catch(() => null))?.size;
   if (size === undefined) continue;
 
   const payload = JSON.parse(await readFile(file, "utf8"));
-  // Declared by whoever exported it (export_movement.py --kind), not measured.
+  // Declared by a person (export_movement.py, set-info), never measured.
   const info = JSON.parse(
     await readFile(join(dataRoot, entry.name, "info.json"), "utf8").catch(() => "{}"),
   );
+  for (const p of infoProblems(info)) problems.push(`${entry.name}/info.json: ${p}`);
+
+  // Who may see it - also declared, never inferred from the roster: being IN
+  // a demo is not the same as having published it. The Worker enforces this
+  // (worker/access.ts) and treats anything undeclared as private, so a demo
+  // with no declaration is not leaked, only hidden; say so here, where the
+  // person who can fix it is looking.
+  const visibility = info.visibility ?? "private";
+  const owner = info.owner === undefined ? undefined : String(info.owner);
+  if (info.visibility === undefined) undeclared.push(entry.name);
+  else if (visibility !== "public" && owner === undefined) orphaned.push(entry.name);
+
   const pros = [...new Set(
     (payload.players ?? []).map((p) => proOf.get(String(p.id))).filter(Boolean),
   )].sort();
@@ -60,6 +76,10 @@ for (const entry of entries.filter((e) => e.isDirectory())) {
     kind: info.kind === "pug" || info.kind === "match" ? info.kind : "unknown",
     ...(info.event ? { event: info.event } : {}),
     ...(info.date ? { date: info.date } : {}),
+    visibility,
+    ...(owner ? { owner } : {}),
+    // What a signed-out visitor is shown on the home page.
+    ...(info.sample === true ? { sample: true } : {}),
     // More than one means a merged payload; the Pros pages leave those out,
     // since the games in them are listed on their own as well.
     games: (payload.demos ?? []).length || 1,
@@ -75,12 +95,29 @@ for (const entry of entries.filter((e) => e.isDirectory())) {
     // every demo in a merged payload, so each game is measured on its own and
     // the games are added up - the same reading timeline.ts gives the viewer.
     seconds: Math.round(playSeconds(payload.rounds ?? {})),
+    // Final score and every player's K/D/A and ADR. All ten, not just the
+    // uploader's: which line a table shows depends on who is looking.
+    ...playSummary(payload),
   });
+}
+
+// Refuse rather than warn. A bad visibility or a private sample would publish
+// something wider, or narrower, than whoever wrote info.json meant.
+if (problems.length) {
+  console.error(["demo index NOT written:", ...problems].join("\n  "));
+  process.exit(1);
 }
 
 demos.sort((a, b) => a.name.localeCompare(b.name));
 await writeFile(join(dataRoot, "index.json"), JSON.stringify({ demos }, null, 2) + "\n");
 console.log(`demo index: ${demos.length} demo(s) -> public/data/index.json`);
+if (undeclared.length) {
+  console.warn(`  no visibility declared, so private to nobody once published: ${undeclared.join(", ")}`);
+  console.warn("  declare it: npm run set-info -- <demo> --visibility ... [--owner <steamid>]");
+}
+if (orphaned.length) {
+  console.warn(`  not public but no owner, so nobody can open them: ${orphaned.join(", ")}`);
+}
 
 async function writeEmpty() {
   const { mkdir } = await import("node:fs/promises");

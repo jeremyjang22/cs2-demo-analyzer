@@ -1,97 +1,132 @@
-import { useEffect, useState } from "react";
-import SteamAuth from "./SteamAuth";
+import { useEffect, useMemo, useState } from "react";
+import DemoFilters from "./DemoFilters";
+import DemoTable from "./DemoTable";
+import NavBar from "./NavBar";
+import { LOGIN_HREF } from "../api";
+import {
+  applyFilters, NO_FILTERS, sampleDemos, sampleSubject, sortDemos, yourDemos,
+  type Filters, type Sort, type Subject,
+} from "../demoTable";
 import { loadIndex, type DemoSummary } from "../payload";
-import { demoLabel, KIND_LABEL, PROS } from "../pros";
-import { PROS_HREF, viewerHref } from "../route";
+import { demoLabel, PROS } from "../pros";
+import { PROS_HREF } from "../route";
+import { useMe } from "../useMe";
 
-/** "1h 22m" / "29m" — a match length, not a stopwatch. */
-function duration(seconds: number): string {
-  const m = Math.round(seconds / 60);
-  return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
-}
-
-/** de_anubis → Anubis. The de_ prefix is noise once they are all in a row. */
-function mapLabel(map: string): string {
-  const bare = map.replace(/^(de|cs)_/, "");
-  return bare.charAt(0).toUpperCase() + bare.slice(1);
-}
-
+/**
+ * The home page: your games, or - signed out - a sample to try the viewer on.
+ *
+ * Signed in, the table's subject is you: every published demo you played in
+ * or own, with your result, K/D/A and ADR, and the way into the Pros section.
+ * Signed out there is nobody to show games for, so the page shows the declared
+ * samples instead, seen through the pro they were chosen for - which is all
+ * the Worker sends a signed-out visitor anyway (worker/access.ts). This
+ * decides only how to show what the index holds.
+ */
 export default function Home() {
-  const [demos, setDemos] = useState<DemoSummary[] | null>(null);
+  const [index, setIndex] = useState<DemoSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const auth = useMe();
 
   useEffect(() => {
     let cancelled = false;
     loadIndex()
-      .then((list) => !cancelled && setDemos(list))
+      .then((list) => !cancelled && setIndex(list))
       .catch((e: Error) => !cancelled && setError(e.message));
     return () => { cancelled = true; };
   }, []);
 
+  const steamid = auth.status === "in" ? auth.me.steamid : null;
+
   return (
     <div className="home">
-      <header className="home-top">
-        <div>
-          <h1 className="home-title">CS2 Demo Analyzer</h1>
-          <p className="home-tag">
-            Parsed demos, played back on the radar — movement, utility, the
-            bomb, and every shot that landed.
-          </p>
-        </div>
-        <SteamAuth />
-      </header>
+      <NavBar active="mine" />
 
-      {PROS.length > 0 && (
-        <a className="pros-link" href={PROS_HREF}>
-          <b>Pros</b>
-          <span className="muted">
-            Pro players' POVs from their pugs and matches, by map: {PROS.map((p) => p.name).join(", ")}
-          </span>
-          <span aria-hidden>→</span>
-        </a>
+      {error && <p className="home-empty">{error}</p>}
+      {!error && (index === null || auth.status === "loading") && <p className="home-empty muted">Loading…</p>}
+
+      {index && auth.status !== "loading" && (
+        steamid
+          ? <YourDemos index={index} steamid={steamid} />
+          : <Samples index={index} />
       )}
-
-      <section>
-        <h2 className="home-h2">Demos</h2>
-
-        {error && <p className="home-empty">{error}</p>}
-        {!error && demos === null && <p className="home-empty muted">Loading…</p>}
-
-        {/* Deliberately not a set of instructions. Demos are parsed and
-            published by whoever runs this, not by whoever visits it, and
-            printing the CLI here read as an invitation to add your own. */}
-        {demos?.length === 0 && (
-          <div className="home-empty">
-            <p>No demos published yet.</p>
-            <p className="muted">Check back once one has been.</p>
-          </div>
-        )}
-
-        <div className="demo-grid">
-          {demos?.map((d) => (
-            <a key={d.name} className="demo-card" href={viewerHref(d.name)}>
-              <span className="demo-map">{mapLabel(d.map)}</span>
-              <span className="demo-name" title={d.name}>{demoLabel(d)}</span>
-              {d.kind && d.kind !== "unknown" && (
-                <span className={`kind kind-${d.kind}`}>{KIND_LABEL[d.kind]}</span>
-              )}
-              <span className="demo-meta">
-                <span>{d.rounds} rounds</span>
-                <span>{d.players} players</span>
-                <span>{duration(d.seconds)}</span>
-              </span>
-              {/* Worth showing before someone opens one on a phone: the
-                  payload is fetched whole, and they run to a few megabytes. */}
-              <span className="demo-size">{(d.kb / 1024).toFixed(1)} MB</span>
-            </a>
-          ))}
-        </div>
-      </section>
 
       <footer className="home-foot muted">
         Demos are parsed from <code>.dem</code> files offline and published here
         as read-only replays.
       </footer>
     </div>
+  );
+}
+
+function YourDemos({ index, steamid }: { index: DemoSummary[]; steamid: string }) {
+  const subject: Subject = useMemo(() => ({ name: "You", ids: [steamid] }), [steamid]);
+  const mine = useMemo(() => yourDemos(index, steamid), [index, steamid]);
+  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  const [sort, setSort] = useState<Sort | null>(null);
+  const shown = useMemo(
+    () => sortDemos(applyFilters(mine, filters, subject), sort, subject, demoLabel),
+    [mine, filters, sort, subject],
+  );
+
+  return (
+    <>
+      <section>
+        <div className="list-head">
+          <h2 className="home-h2">Your demos</h2>
+          <span className="count">{shown.length === mine.length ? mine.length : `${shown.length} of ${mine.length}`}</span>
+        </div>
+        {mine.length > 0 ? (
+          <>
+            <p className="subject">Result, K/D/A and ADR are <b>yours</b>, from your side of each game.</p>
+            {mine.length > 1 && <DemoFilters demos={mine} value={filters} onChange={setFilters} />}
+            <DemoTable demos={shown} subject={subject} sort={sort} onSort={setSort} />
+          </>
+        ) : (
+          <p className="home-empty muted">
+            None of the published demos include you yet.
+            {PROS.length > 0 && <> Meanwhile, <a href={PROS_HREF}>the pros' games</a> are open to you.</>}
+          </p>
+        )}
+      </section>
+    </>
+  );
+}
+
+function Samples({ index }: { index: DemoSummary[] }) {
+  const samples = useMemo(() => sampleDemos(index), [index]);
+  const [sort, setSort] = useState<Sort | null>(null);
+  // Each sample is seen through its own featured pro; with one subject per
+  // table, a single shared one is the first sample's.
+  const subject = samples.length ? sampleSubject(samples[0]) : null;
+  const shown = useMemo(() => sortDemos(samples, sort, subject, demoLabel), [samples, sort, subject]);
+
+  return (
+    <section>
+      <p className="home-tag intro">
+        Parsed CS2 demos, played back on the radar — movement, utility, the
+        bomb, and every shot that landed.
+      </p>
+      <div className="signin">
+        <span>
+          Sign in to see the games you've played, with your result, K/D/A and
+          ADR in each{PROS.length > 0 && <>, and the pros' games to study</>}.
+        </span>
+        <a className="steam-btn" href={LOGIN_HREF}>Sign in through Steam</a>
+      </div>
+      <div className="list-head">
+        <h2 className="home-h2">{samples.length === 1 ? "Sample demo" : "Sample demos"}</h2>
+      </div>
+      {samples.length === 0 ? (
+        <p className="home-empty muted">No sample is published yet.</p>
+      ) : (
+        <>
+          <p className="subject">
+            A fully processed match to try the viewer on, no account needed.
+            {subject && <> Result, K/D/A and ADR are <b>{subject.name}'s</b>.</>}
+          </p>
+          <DemoTable demos={shown} subject={subject} sort={sort} onSort={setSort} />
+        </>
+      )}
+    </section>
   );
 }
