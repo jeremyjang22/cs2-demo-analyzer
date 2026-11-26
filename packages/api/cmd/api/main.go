@@ -152,14 +152,35 @@ func (s *server) steamCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Upsert on every login so a name change is picked up without a separate
-	// sync. The display name is a placeholder until the Steam Web API is wired
-	// in - OpenID returns the id and nothing else.
+	// OpenID proves which account signed in and says nothing else, so the
+	// name and avatar come from the Steam Web API - on every login, which is
+	// what picks up a rename without a separate sync. Best effort: a missing
+	// key or a slow Steam must not stop anyone signing in, so a failed lookup
+	// keeps whatever was stored before (null here, COALESCE below), and a
+	// first-time user without one is named by their steamid.
+	var name, avatar *string
+	if s.cfg.SteamAPIKey != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+		prof, err := auth.FetchProfile(ctx, auth.DefaultClient, s.cfg.SteamAPIKey, steamID)
+		cancel()
+		if err != nil {
+			s.log.Warn("steam profile lookup failed; keeping the stored name", "err", err, "steamid", steamID)
+		} else {
+			name = &prof.Name
+			if prof.Avatar != "" {
+				avatar = &prof.Avatar
+			}
+		}
+	}
+
 	const q = `
-		INSERT INTO users (steamid, display_name)
-		VALUES ($1, $2)
-		ON CONFLICT (steamid) DO UPDATE SET last_seen_at = now()`
-	if _, err := s.pool.Exec(r.Context(), q, int64(steamID), fmt.Sprint(steamID)); err != nil {
+		INSERT INTO users (steamid, display_name, avatar_url)
+		VALUES ($1, COALESCE($2, $4), $3)
+		ON CONFLICT (steamid) DO UPDATE SET
+			last_seen_at = now(),
+			display_name = COALESCE($2, users.display_name),
+			avatar_url   = COALESCE($3, users.avatar_url)`
+	if _, err := s.pool.Exec(r.Context(), q, int64(steamID), name, avatar, fmt.Sprint(steamID)); err != nil {
 		s.log.Error("upsert user", "err", err, "steamid", steamID)
 		http.Error(w, "could not sign you in", http.StatusInternalServerError)
 		return
