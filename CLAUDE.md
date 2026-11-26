@@ -152,6 +152,8 @@ npm test                         # vitest
 npm run typecheck                # app + Cloudflare Worker
 npm run build                    # typecheck + bundle
 npm run upload-data              # publish demo payloads to R2 (needs wrangler login)
+                                 # ^ merges into the published index, so any
+                                 #   machine can publish; --unlist <demo> removes
 npm run deploy                   # build + wrangler deploy, if you ever need to
                                  # bypass CI; normally main does this for you
 

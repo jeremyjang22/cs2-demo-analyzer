@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { demoNameOf, infoProblems, playSummary, validDate } from "./demo-info.mjs";
+import { demoNameOf, infoProblems, mergeIndex, playSummary, validDate } from "./demo-info.mjs";
 
 describe("infoProblems", () => {
   it("accepts a fully declared demo", () => {
@@ -70,5 +70,37 @@ describe("demoNameOf", () => {
     expect(demoNameOf("nukepug.dem")).toBe("nukepug");
     expect(demoNameOf("1-abc-1-1.dem.zst")).toBe("1-abc-1-1");
     expect(demoNameOf("notes.txt")).toBeNull();
+  });
+});
+
+describe("mergeIndex", () => {
+  const entry = (name, extra = {}) => ({ name, ...extra });
+  const published = [entry("anubispug"), entry("nukepug", { v: "old" }), entry("sample")];
+
+  // An upload from a machine holding one new demo must not unlist the rest.
+  it("keeps every published demo the upload does not touch", () => {
+    const r = mergeIndex(published, [entry("newpug")], ["newpug"]);
+    expect(r.demos.map((d) => d.name)).toEqual(["anubispug", "newpug", "nukepug", "sample"]);
+    expect(r.added).toEqual(["newpug"]);
+    expect(r.kept).toEqual(["anubispug", "nukepug", "sample"]);
+  });
+
+  it("replaces only the entries of demos being uploaded", () => {
+    const local = [entry("nukepug", { v: "new" }), entry("anubispug", { v: "stale local copy" })];
+    const r = mergeIndex(published, local, ["nukepug"]);
+    expect(r.demos.find((d) => d.name === "nukepug").v).toBe("new");
+    expect(r.demos.find((d) => d.name === "anubispug").v).toBeUndefined();
+    expect(r.replaced).toEqual(["nukepug"]);
+  });
+
+  it("unlists on request, and only what was published", () => {
+    const r = mergeIndex(published, [], [], ["sample", "never-published"]);
+    expect(r.demos.map((d) => d.name)).toEqual(["anubispug", "nukepug"]);
+    expect(r.removed).toEqual(["sample"]);
+  });
+
+  it("does not list a demo that had nothing to upload", () => {
+    const r = mergeIndex([], [], ["no-payload"]);
+    expect(r.demos).toEqual([]);
   });
 });
