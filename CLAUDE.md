@@ -62,7 +62,7 @@ notebook.
 | `packages/web/` | TypeScript + React. The viewer and the home page. |
 | `playground/python/…/demo_output_processor/` | Python. Notebook helpers over the CSVs (`demo_data.py`), and the original `movement.json` exporter — kept as the reference the Go builder is checked against, and for `--merge`. |
 | `scripts/` | `dev.sh` — runs the whole site locally. `clips/record-clips.ps1` records clips on the Windows laptop. |
-| `docs/` | Output format and deployment, both worth reading before changing either. |
+| `docs/` | Output format and deployment, both worth reading before changing either. `demo-file.md` is what a `.dem` holds, measured: read it before deciding something is or is not in the demo. |
 | `assets/radar/` | Map images. Committed; copied into the web build. |
 
 **The Go module root is `packages/`, not the repo root.** Every `go` command
