@@ -15,7 +15,7 @@
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { infoProblems, playSummary } from "./demo-info.mjs";
+import { infoProblems, measure } from "./demo-info.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dataRoot = join(here, "..", "public", "data");
@@ -80,24 +80,10 @@ for (const entry of entries.filter((e) => e.isDirectory())) {
     ...(owner ? { owner } : {}),
     // What a signed-out visitor is shown on the home page.
     ...(info.sample === true ? { sample: true } : {}),
-    // More than one means a merged payload; the Pros pages leave those out,
-    // since the games in them are listed on their own as well.
-    games: (payload.demos ?? []).length || 1,
     pros,
-    map: payload.map ?? "unknown",
-    rounds: Object.keys(payload.rounds ?? {}).length,
-    players: (payload.players ?? []).length,
-    // Shown so someone can see what a demo costs before opening it on a
-    // phone. Kilobytes, because megabytes would round most of them to "1".
-    kb: Math.round(size / 1024),
-    // Round durations are relative to each round's own start, so the last
-    // round's end is the length of a game's live play. t0 restarts at zero for
-    // every demo in a merged payload, so each game is measured on its own and
-    // the games are added up - the same reading timeline.ts gives the viewer.
-    seconds: Math.round(playSeconds(payload.rounds ?? {})),
-    // Final score and every player's K/D/A and ADR. All ten, not just the
-    // uploader's: which line a table shows depends on who is looking.
-    ...playSummary(payload),
+    // The measured half: games, map, rounds, players, kb, seconds, score,
+    // lines. Shared with the Go catalogue, which generates the published index.
+    ...measure(payload, size),
   });
 }
 
@@ -124,16 +110,4 @@ async function writeEmpty() {
   await mkdir(dataRoot, { recursive: true });
   await writeFile(join(dataRoot, "index.json"), JSON.stringify({ demos: [] }, null, 2) + "\n");
   console.log("demo index: no exports found, wrote an empty index");
-}
-
-/** Live play across every game in a payload, merged or not. */
-function playSeconds(rounds) {
-  const perGame = new Map();
-  for (const r of Object.values(rounds)) {
-    const dm = r.dm ?? 0;
-    perGame.set(dm, Math.max(perGame.get(dm) ?? 0, (r.t0 ?? 0) + (r.dur ?? 0)));
-  }
-  let total = 0;
-  for (const s of perGame.values()) total += s;
-  return total;
 }

@@ -98,40 +98,51 @@ export function playSummary(payload) {
   return { score: [last.sa, last.sb], lines };
 }
 
+/**
+ * Everything an index entry MEASURES from a payload, given its size in bytes.
+ *
+ * packages/catalog (Go) generates the published index from the database and
+ * ports this function as catalog.Measure. Both are checked against the same
+ * fixture, packages/catalog/testdata: change one and the other's test fails.
+ */
+export function measure(payload, bytes) {
+  return {
+    // More than one means a merged payload; the Pros pages leave those out,
+    // since the games in them are listed on their own as well.
+    games: (payload.demos ?? []).length || 1,
+    map: payload.map ?? "unknown",
+    rounds: Object.keys(payload.rounds ?? {}).length,
+    players: (payload.players ?? []).length,
+    // Shown so someone can see what a demo costs before opening it on a
+    // phone. Kilobytes, because megabytes would round most of them to "1".
+    kb: Math.round(bytes / 1024),
+    // Round durations are relative to each round's own start, so the last
+    // round's end is the length of a game's live play. t0 restarts at zero for
+    // every demo in a merged payload, so each game is measured on its own and
+    // the games are added up - the same reading timeline.ts gives the viewer.
+    seconds: Math.round(playSeconds(payload.rounds ?? {})),
+    // Final score and every player's K/D/A and ADR. All ten, not just the
+    // uploader's: which line a table shows depends on who is looking.
+    ...playSummary(payload),
+  };
+}
+
+/** Live play across every game in a payload, merged or not. */
+export function playSeconds(rounds) {
+  const perGame = new Map();
+  for (const r of Object.values(rounds)) {
+    const dm = r.dm ?? 0;
+    perGame.set(dm, Math.max(perGame.get(dm) ?? 0, (r.t0 ?? 0) + (r.dur ?? 0)));
+  }
+  let total = 0;
+  for (const s of perGame.values()) total += s;
+  return total;
+}
+
 /** A local calendar date for a file's modified time: the day it was recorded where you are. */
 export function localDate(mtime) {
   const d = new Date(mtime);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-/**
- * The index to publish: what is already published, with this upload's demos
- * added or replaced and any `unlist`ed ones removed.
- *
- * The bucket is shared by every machine that publishes, and the index
- * describes the bucket - not one machine's disk. Rebuilding it from local
- * folders alone meant an upload from a second machine published an index of
- * one demo, and the Worker, which serves nothing the index does not list,
- * hid every other. So only the demos actually uploaded take their entries from
- * the local build; everything else keeps the entry that was already live.
- *
- * Returns the merged entries (by name, as index-demos writes them) and what
- * changed, for the upload to report.
- */
-export function mergeIndex(published, local, uploading, unlist = []) {
-  const byName = new Map(published.map((d) => [d.name, d]));
-  const removed = unlist.filter((n) => byName.delete(n));
-  const fresh = new Map(local.map((d) => [d.name, d]));
-  const added = [], replaced = [];
-  for (const name of uploading) {
-    const entry = fresh.get(name);
-    if (!entry) continue; // no movement.json, so not uploaded either
-    (byName.has(name) ? replaced : added).push(name);
-    byName.set(name, entry);
-  }
-  const kept = [...byName.keys()].filter((n) => !added.includes(n) && !replaced.includes(n));
-  const demos = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
-  return { demos, added, replaced, kept, removed };
 }
 
 /** "nukepug.dem" or "x.dem.zst" → "nukepug" / "x"; null for anything else. */
