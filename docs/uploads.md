@@ -25,7 +25,8 @@ PC today and on Northflank later, with no code change between the two.
 
 1. **Ask.** The page hashes the file (SHA-256, in 8 MB slices so a 670 MB
    demo is never in memory at once) and asks the API for an upload.
-   The API checks: signed in, on the uploader allowlist, under the size cap
+   The API checks: signed in, on the uploader allowlist (the `uploaders`
+   table, `demo-catalog uploaders`), under the size cap
    (1 GB), under a daily quota. A demo whose hash is already known returns the
    existing demo at once. Otherwise it inserts a `demos` row (`uploading`) and
    returns a presigned R2 PUT for `incoming/<id>`, valid for an hour and bound

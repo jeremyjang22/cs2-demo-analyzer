@@ -10,6 +10,9 @@
 //	demo-catalog unlist nukepug               # off the site; files stay in the bucket
 //	demo-catalog publish [-dry-run]           # regenerate the index from the database
 //	demo-catalog import [-apply]              # once: register what the old index listed
+//	demo-catalog uploaders                    # who may upload through the site
+//	demo-catalog uploaders add <steamid> -note "who"
+//	demo-catalog uploaders remove <steamid>
 //
 // Run from packages/. Settings come from the environment, falling back to
 // packages/api/.env: DATABASE_URL, and R2_ACCOUNT_ID, R2_ACCESS_KEY_ID,
@@ -35,6 +38,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/jeremyjang22/cs2-demo-analyzer/packages/catalog"
 	"github.com/jeremyjang22/cs2-demo-analyzer/packages/envfile"
 )
@@ -47,6 +52,9 @@ const usage = `usage: demo-catalog <command> [flags]
   unlist <name>...          take demos off the site (their files stay in the bucket)
   publish [-dry-run]        regenerate data/index.json from the database
   import [-apply]           once: register every demo the published index lists
+  uploaders                 who may upload through the site
+  uploaders add <steamid> [-note "who"]    let someone upload (at once, no restart)
+  uploaders remove <steamid>               stop them; their demos stay
 
 every command takes -env (default api/.env) and -pros (default web/src/pros.json)
 `
@@ -70,6 +78,7 @@ func run(args []string) error {
 	dataDir := fs.String("data", filepath.Join("web", "public", "data"), "where put finds a demo given by name")
 	dryRun := fs.Bool("dry-run", false, "publish: say what would change, change nothing")
 	apply := fs.Bool("apply", false, "import: write the rows (without it, only compares)")
+	note := fs.String("note", "", "uploaders add: who this is, for whoever reads the list later")
 	decl := declFlags(fs)
 	if err := fs.Parse(interleave(args)); err != nil {
 		return err
@@ -79,6 +88,9 @@ func run(args []string) error {
 		return err
 	}
 	ctx := context.Background()
+	if cmd == "uploaders" {
+		return uploaders(ctx, fs.Args(), *note)
+	}
 	p, err := catalog.FromEnv(ctx, *prosPath)
 	if err != nil {
 		return err
@@ -363,6 +375,58 @@ func (d *declaration) info(fs *flag.FlagSet) catalog.Info {
 // interleave moves flags ahead of positional arguments, so
 // `set nukepug -kind pug` reads the way people type it. The flag package
 // stops at the first positional argument otherwise.
+// uploaders lists or changes who may upload. Only the database: it works
+// without the bucket's keys.
+func uploaders(ctx context.Context, args []string, note string) error {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		return errors.New("DATABASE_URL is not set (packages/api/.env, see docs/uploads.md)")
+	}
+	db, err := pgxpool.New(ctx, url)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer db.Close()
+
+	switch {
+	case len(args) == 0:
+		list, err := catalog.Uploaders(ctx, db)
+		if err != nil {
+			return err
+		}
+		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(w, "STEAMID\tADDED\tNOTE")
+		for _, u := range list {
+			fmt.Fprintf(w, "%s\t%s\t%s\n", u.SteamID, u.AddedAt.Format("2006-01-02"), u.Note)
+		}
+		fmt.Fprintf(w, "\n%d uploader(s)\n", len(list))
+		return w.Flush()
+	case len(args) == 2 && args[0] == "add":
+		added, err := catalog.AddUploader(ctx, db, args[1], note)
+		if err != nil {
+			return err
+		}
+		if added {
+			fmt.Printf("%s can upload now.\n", args[1])
+		} else {
+			fmt.Printf("%s could already upload.\n", args[1])
+		}
+		return nil
+	case len(args) == 2 && args[0] == "remove":
+		removed, err := catalog.RemoveUploader(ctx, db, args[1])
+		if err != nil {
+			return err
+		}
+		if removed {
+			fmt.Printf("%s can no longer upload. Their demos stay, and anything already queued is still processed.\n", args[1])
+		} else {
+			fmt.Printf("%s was not an uploader.\n", args[1])
+		}
+		return nil
+	}
+	return errors.New("usage: demo-catalog uploaders [add <steamid> [-note \"who\"] | remove <steamid>]")
+}
+
 func interleave(args []string) []string {
 	var flags, rest []string
 	for i := 0; i < len(args); i++ {

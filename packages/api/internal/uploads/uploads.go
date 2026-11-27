@@ -35,13 +35,10 @@ type Storage interface {
 	Size(ctx context.Context, key string) (int64, error)
 }
 
-// Config is the rules. The zero value lets nobody upload anything.
+// Config is the rules. Who may upload at all is not here but in the
+// uploaders table (catalog.IsUploader), so it changes without a restart.
 type Config struct {
-	// Uploaders is the allowlist, by steamid (2026-11-26: uploads are a
-	// file from someone else parsed on the owner's PC, so they start
-	// invitation-only).
-	Uploaders map[uint64]bool
-	MaxBytes  int64
+	MaxBytes int64
 	// DailyLimit is uploads per uploader per rolling 24 hours.
 	DailyLimit int
 	// URLTTL is how long an upload URL stays good.
@@ -94,9 +91,13 @@ type Ticket struct {
 	Duplicate bool       `json:"duplicate"`
 }
 
-// Allowed reports whether steamid may upload at all, now.
-func (s *Service) Allowed(steamid uint64) bool {
-	return s.Store != nil && s.Cfg.Uploaders[steamid]
+// Allowed reports whether steamid may upload at all, now: storage is
+// configured and they are on the allowlist. An error is a refusal too.
+func (s *Service) Allowed(ctx context.Context, steamid uint64) (bool, error) {
+	if s.Store == nil {
+		return false, nil
+	}
+	return catalog.IsUploader(ctx, s.DB, steamid)
 }
 
 var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -183,7 +184,11 @@ func scanUpload(row pgx.Row) (Upload, error) {
 
 // Start checks a request and hands out somewhere to put the file.
 func (s *Service) Start(ctx context.Context, steamid uint64, r Request) (Ticket, error) {
-	if !s.Allowed(steamid) {
+	ok, err := s.Allowed(ctx, steamid)
+	if err != nil {
+		return Ticket{}, err
+	}
+	if !ok {
 		if s.Store == nil {
 			return Ticket{}, refuse(http.StatusServiceUnavailable, "uploads are not configured on this server")
 		}
@@ -354,29 +359,4 @@ func (s *Service) Online(ctx context.Context) (bool, error) {
 	err := s.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM workers WHERE seen_at > now() - make_interval(secs => $1))`,
 		worker.LeaseFor.Seconds()).Scan(&online)
 	return online, err
-}
-
-// ParseUploaders reads the allowlist: steamids separated by commas or
-// spaces. A malformed entry is an error rather than skipped, so a typo does
-// not silently lock someone out.
-func ParseUploaders(s string) (map[uint64]bool, error) {
-	out := map[uint64]bool{}
-	for _, f := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
-		var id uint64
-		if len(f) != 17 || !isDigits(f) {
-			return nil, fmt.Errorf("UPLOADERS: %q is not a 64-bit steamid (17 digits)", f)
-		}
-		fmt.Sscan(f, &id)
-		out[id] = true
-	}
-	return out, nil
-}
-
-func isDigits(s string) bool {
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
 }

@@ -121,13 +121,18 @@ digest it is handed:
   | `PORT` | `8080` |
   | `STEAM_API_KEY` | optional — [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey); names and avatars at sign-in |
   | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | for uploads: the same R2 token as `packages/api/.env` ([Publishing](#publishing-demo-data)) |
-  | `UPLOADERS` | for uploads: steamids allowed to upload, comma-separated; empty means nobody |
   | `UPLOAD_MAX_BYTES`, `UPLOAD_DAILY_LIMIT` | optional — default 1 GB and 20 a day per uploader |
 
   Uploads are off until the R2 variables are set: the API still starts and
   serves sign-in, logs `uploads off` with what is missing, and the site shows
   no Upload button. Everything else is the upload worker's job
   (`docs/uploads.md`).
+
+  Who may upload is not a variable but the `uploaders` table, so inviting
+  someone needs no redeploy: `go run ./demo-catalog uploaders add <steamid>
+  -note "who"` from `packages/`, and `uploaders remove` to stop them. Until
+  November 2026 it was an `UPLOADERS` variable here; the API now ignores it
+  and logs a warning while it is still set.
 
   Without `STEAM_API_KEY` sign-in still works, but OpenID returns only the
   steamid, so that is the name everyone is shown. With it, each sign-in reads

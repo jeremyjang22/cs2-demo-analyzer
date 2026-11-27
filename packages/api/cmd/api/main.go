@@ -74,7 +74,12 @@ func run(log *slog.Logger) error {
 		log.Warn("uploads off", "why", err.Error())
 	} else {
 		up.Store = st
-		log.Info("uploads on", "uploaders", len(cfg.Uploads.Uploaders))
+		log.Info("uploads on")
+	}
+	// Left over from before the uploaders table: say so rather than let
+	// someone edit it and wonder why nothing changes.
+	if os.Getenv("UPLOADERS") != "" {
+		log.Warn("UPLOADERS is no longer read; who may upload is the uploaders table (demo-catalog uploaders add <steamid>)")
 	}
 
 	srv := &server{cfg: cfg, pool: pool, log: log, uploads: up}
@@ -256,8 +261,13 @@ func (s *server) listUploads(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, "list uploads", err)
 		return
 	}
+	// A failed check reads as "cannot upload" rather than failing the list.
+	canUpload, err := s.uploads.Allowed(r.Context(), sess.SteamID)
+	if err != nil {
+		s.log.Warn("uploader check", "err", err)
+	}
 	body := map[string]any{
-		"canUpload": s.uploads.Allowed(sess.SteamID),
+		"canUpload": canUpload,
 		"maxBytes":  s.cfg.Uploads.MaxBytes,
 		"uploads":   list,
 	}
