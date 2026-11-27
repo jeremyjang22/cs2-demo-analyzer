@@ -1,6 +1,6 @@
 # Uploading demos through the site
 
-Status: **phase A built** (2026-11-26); C, D, E to come. Decisions dated where made.
+Status: **phases A and C built** (2026-11-26); D and E to come. Decisions dated where made.
 
 The goal: open the site on any machine, upload a `.dem`, and have it appear
 as a replay a minute later - processed by a worker that runs on the owner's
@@ -22,12 +22,15 @@ PC today and on Northflank later, with no code change between the two.
                                      └───────────────┘  └──────────┘
 ```
 
-1. **Ask.** The page hashes the file (SHA-256) and asks the API for an upload.
+1. **Ask.** The page hashes the file (SHA-256, in 8 MB slices so a 670 MB
+   demo is never in memory at once) and asks the API for an upload.
    The API checks: signed in, on the uploader allowlist, under the size cap
    (1 GB), under a daily quota. A demo whose hash is already known returns the
    existing demo at once. Otherwise it inserts a `demos` row (`uploading`) and
    returns a presigned R2 PUT for `incoming/<id>`, valid for an hour and bound
-   to the declared length.
+   to the declared length - R2 itself refuses a body of any other size
+   (checked 2026-11-26). Asking again for the same unfinished upload hands out
+   a fresh URL, so an interrupted transfer can be started over.
 2. **Upload.** The browser PUTs the file **directly to R2**, with progress.
    Not through the Worker - Cloudflare's free plan caps a request body at
    100 MB, and demos run to 670 MB - and not through Northflank, which would
@@ -123,7 +126,7 @@ Each one ships on its own and leaves the site working.
 | | Phase | Visible result |
 |---|---|---|
 | A | Catalogue in the database: schema, `summary`, existing demos registered; Go writes payloads and `index.json` to R2 from the database (`packages/catalog`, `store`, `demo-catalog`) - **done** | nothing - publishing goes through the database |
-| C | Upload endpoints, allowlist, presigned PUTs, bucket CORS; Upload button and status rows | rows reach "queued" |
+| C | Upload endpoints, allowlist, presigned PUTs, bucket CORS; Upload button and status rows (`api/internal/uploads`, `Uploads.tsx`) - **done** | rows reach "queued" |
 | D | `demo-worker`, started at login on the owner's PC (2026-11-26) | an upload from another machine appears on the site |
 | E | The same binary as a Northflank service, sized from its measured memory on the 670 MB reference demo | processing without the PC |
 

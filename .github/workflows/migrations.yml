@@ -14,6 +14,7 @@ on:
       - "packages/api/migrations/**"
       - "packages/api/schema/schema.sql"
       - "packages/catalog/**"
+      - "packages/api/internal/uploads/**"
       - ".github/workflows/migrations.yml"
   # Branches here are usually merged straight to main, which no pull_request
   # event sees. This runs alongside deploy-api's apply; a red run here says
@@ -24,6 +25,7 @@ on:
       - "packages/api/migrations/**"
       - "packages/api/schema/schema.sql"
       - "packages/catalog/**"
+      - "packages/api/internal/uploads/**"
       - ".github/workflows/migrations.yml"
 
 permissions:
@@ -70,11 +72,12 @@ jobs:
           go-version-file: packages/go.mod
           cache-dependency-path: packages/go.sum
 
-      - name: the catalogue's queries against the migrated schema
+      - name: the hand-written SQL against the migrated schema
         working-directory: packages
-        # packages/catalog writes the demos table with hand-written SQL, so a
-        # migration that renames or retypes a column it uses fails here, on
-        # the PR, rather than at the next publish.
+        # packages/catalog and the upload endpoints write the demos and jobs
+        # tables with hand-written SQL, so a migration that renames or retypes
+        # a column they use fails here rather than in production. -p 1: both
+        # tests empty the demos table, so they must not run at once.
         env:
-          CATALOG_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
-        run: go test ./catalog -run SaveLoad -v
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+        run: go test -p 1 -v -run "SaveLoad|UploadFlow" ./catalog ./api/internal/uploads

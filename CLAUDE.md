@@ -56,7 +56,7 @@ notebook.
 | `packages/demo-analytics/` | Go. Command-line wrapper around analytics. |
 | `packages/clip-list/` | Go. Picks moments worth recording (openings, multikills, clutches) and writes them as clip lists for the recording laptop. See `docs/clip-capture.md`. |
 | `packages/clip-overlay/` | Go. Draws the player's keys and mouse buttons over recorded clips (ASS script, burnt in with FFmpeg). |
-| `packages/api/` | Go. Small HTTP server: Steam login. Talks to Postgres. |
+| `packages/api/` | Go. Small HTTP server: Steam login, and uploads into the processing queue (`internal/uploads`). Talks to Postgres and R2. |
 | `packages/web/` | TypeScript + React. The viewer and the home page. |
 | `playground/python/…/demo_output_processor/` | Python. Notebook helpers over the CSVs (`demo_data.py`), and the original `movement.json` exporter — kept as the reference the Go builder is checked against, and for `--merge`. |
 | `scripts/` | `dev.sh` — runs the whole site locally. `clips/record-clips.ps1` records clips on the Windows laptop. |
@@ -100,7 +100,7 @@ go run ./demo-catalog set nukepug -visibility public -sample true
 go run ./demo-catalog unlist nukepug             # off the site; files stay in R2
 go run ./demo-catalog publish -dry-run           # regenerate the index, say what changes
 CATALOG_DATA=web/public/data go test ./catalog   # Go index == index-demos' on your demos
-CATALOG_TEST_DATABASE_URL=<throwaway, migrated> go test ./catalog   # the SQL
+TEST_DATABASE_URL=<throwaway, migrated> go test ./catalog   # the SQL
 
 # --- the payload checked against the Python exporter (needs parsed demos)
 PAYLOAD_GOLDEN=<folder of <demo>/movement.json from export_movement.py> \
@@ -322,9 +322,10 @@ statistic, compare it to a number you already know.
 
 ## What is not built yet
 
-Uploading demos through the website, designed in `docs/uploads.md` and built
-in phases. Phase A is done: the catalogue is in the database and Go writes R2.
-Still to come are the upload endpoints and button (C), `demo-worker` processing
-the `jobs` queue on the owner's PC, started at login (D), and the same worker
-on Northflank (E). Until then, parsing is something a person runs on their own
-machine.
+Processing uploads, designed in `docs/uploads.md` and built in phases. A (the
+catalogue in the database) and C (upload endpoints, the Upload button, status
+rows) are done: an upload from the site reaches the `jobs` queue and waits
+there. Still to come are `demo-worker`, processing that queue on the owner's
+PC and started at login (D), and the same worker on Northflank (E). Until
+then, a demo reaches the site through `demo-export -upload` on a machine with
+the keys.

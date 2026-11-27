@@ -18,9 +18,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -120,14 +123,42 @@ func (s *Store) Get(ctx context.Context, key string) ([]byte, error) {
 
 // Exists reports whether key is in the bucket.
 func (s *Store) Exists(ctx context.Context, key string) (bool, error) {
-	_, err := s.client.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{})
-	if err == nil {
-		return true, nil
-	}
-	if err = s.wrap("stat", key, err); errors.Is(err, ErrNotFound) {
+	_, err := s.Size(ctx, key)
+	if errors.Is(err, ErrNotFound) {
 		return false, nil
 	}
-	return false, err
+	return err == nil, err
+}
+
+// Size is an object's length in bytes. ErrNotFound if there is none.
+func (s *Store) Size(ctx context.Context, key string) (int64, error) {
+	info, err := s.client.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		return 0, s.wrap("stat", key, err)
+	}
+	return info.Size, nil
+}
+
+// Delete removes an object. Deleting one that is not there is not an error.
+func (s *Store) Delete(ctx context.Context, key string) error {
+	if err := s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{}); err != nil {
+		return s.wrap("delete", key, err)
+	}
+	return nil
+}
+
+// PresignPut is a URL that lets whoever holds it PUT exactly size bytes to
+// key, and nothing else, until it expires - how a browser uploads a demo
+// straight to the bucket without holding a credential. The length is part of
+// the signature, so the same URL used for a different file is refused by R2
+// itself; the API still checks the stored size afterwards.
+func (s *Store) PresignPut(ctx context.Context, key string, size int64, expires time.Duration) (string, error) {
+	u, err := s.client.PresignHeader(ctx, http.MethodPut, s.bucket, key, expires, nil,
+		http.Header{"Content-Length": {strconv.FormatInt(size, 10)}})
+	if err != nil {
+		return "", fmt.Errorf("presign %s: %w", key, err)
+	}
+	return u.String(), nil
 }
 
 func (s *Store) wrap(op, key string, err error) error {

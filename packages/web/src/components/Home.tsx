@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import DemoFilters from "./DemoFilters";
 import DemoTable from "./DemoTable";
 import NavBar from "./NavBar";
+import Uploads from "./Uploads";
 import { LOGIN_HREF } from "../api";
 import {
   applyFilters, NO_FILTERS, sampleDemos, sampleSubject, sortDemos, yourDemos,
   type Filters, type Sort, type Subject,
 } from "../demoTable";
-import { loadIndex, type DemoSummary } from "../payload";
+import { loadIndex, reloadIndex, type DemoSummary } from "../payload";
 import { demoLabel, PROS } from "../pros";
 import { PROS_HREF } from "../route";
 import { useMe } from "../useMe";
@@ -36,10 +37,15 @@ export default function Home() {
   }, []);
 
   const steamid = auth.status === "in" ? auth.me.steamid : null;
+  // An upload just turned ready: fetch the list again so it joins the table.
+  const published = useCallback(() => {
+    reloadIndex().then(setIndex).catch((e: Error) => setError(e.message));
+  }, []);
 
   return (
     <div className="home">
       <NavBar active="mine" />
+      {steamid && <Uploads onPublished={published} />}
 
       {error && <p className="home-empty">{error}</p>}
       {!error && (index === null || auth.status === "loading") && <p className="home-empty muted">Loading…</p>}

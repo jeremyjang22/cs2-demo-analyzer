@@ -120,6 +120,14 @@ digest it is handed:
   | `WEB_ORIGIN` | `https://<your-domain>` |
   | `PORT` | `8080` |
   | `STEAM_API_KEY` | optional — [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey); names and avatars at sign-in |
+  | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | for uploads: the same R2 token as `packages/api/.env` ([Publishing](#publishing-demo-data)) |
+  | `UPLOADERS` | for uploads: steamids allowed to upload, comma-separated; empty means nobody |
+  | `UPLOAD_MAX_BYTES`, `UPLOAD_DAILY_LIMIT` | optional — default 1 GB and 20 a day per uploader |
+
+  Uploads are off until the R2 variables are set: the API still starts and
+  serves sign-in, logs `uploads off` with what is missing, and the site shows
+  no Upload button. Everything else is the upload worker's job
+  (`docs/uploads.md`).
 
   Without `STEAM_API_KEY` sign-in still works, but OpenID returns only the
   steamid, so that is the name everyone is shown. With it, each sign-in reads
@@ -147,6 +155,20 @@ env).
 An API token with **Workers Scripts: Edit** and **Workers R2 Storage: Edit**,
 from My Profile → API Tokens, becomes `CLOUDFLARE_API_TOKEN`. The account ID is
 on the dashboard sidebar.
+
+Browsers upload demos straight to the bucket with a presigned URL, so the
+bucket needs CORS for the site's origin, and a rule that clears uploads
+nobody finished:
+
+```sh
+cd packages/web
+npx wrangler r2 bucket cors set cs2-demo-payloads --file r2-cors.json
+npx wrangler r2 bucket lifecycle add cs2-demo-payloads abandoned-uploads incoming/ --expire-days 7
+```
+
+`r2-cors.json` allows `PUT` from the deployed origin and from
+`localhost:5173`, and nothing else; a new domain goes in that file. (Set
+2026-11-26.)
 
 ### 5. Repository configuration
 
@@ -330,9 +352,7 @@ does that; a manual deploy from a dirty tree may not have.
 
 ## Not covered yet
 
-- **The parse pipeline.** `round-collector` and `export_movement.py` still run
-  locally. Uploading a `.dem` through the API and parsing it server-side is the
-  feature the `jobs` table in `schema/schema.sql` is waiting for; when it
-  lands, the worker shares this image and this deploy.
+- **The upload worker.** Uploads reach the `jobs` queue (phase C of
+  `docs/uploads.md`); `demo-worker`, which processes them, is phase D.
 - **`packages/fly.toml`** is the previous host's config and is now dead weight.
   Left in place rather than deleted as part of a CI change.

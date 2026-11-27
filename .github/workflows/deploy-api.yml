@@ -15,6 +15,9 @@ on:
     paths:
       - "packages/api/**"
       - "packages/collector/**"
+      # The API imports these too: the bucket, and demo names.
+      - "packages/store/**"
+      - "packages/catalog/**"
       - "packages/go.mod"
       - "packages/go.sum"
       - "packages/Dockerfile"

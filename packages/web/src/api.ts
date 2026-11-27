@@ -60,3 +60,69 @@ export async function logout(): Promise<void> {
 export function steamProfileHref(steamid: string): string {
   return `https://steamcommunity.com/profiles/${steamid}`;
 }
+
+/** One of your uploads. Mirrors uploads.Upload in the API. */
+export interface Upload {
+  id: string;
+  /** What it is published as: ?demo=<name> once ready. */
+  name: string;
+  status: "uploading" | "queued" | "parsing" | "ready" | "failed";
+  filename: string;
+  size: number;
+  /** Why processing failed, when it did. */
+  error?: string;
+  createdAt: string;
+}
+
+export interface UploadsState {
+  /** On the uploader allowlist, and the server has somewhere to put files. */
+  canUpload: boolean;
+  maxBytes: number;
+  uploads: Upload[];
+}
+
+/** Where to PUT the file, or - for a file already known by its hash - the demo it already is. */
+export interface Ticket {
+  upload: Upload;
+  url?: string;
+  expires?: string;
+  duplicate: boolean;
+}
+
+/** Your uploads and whether you may upload; null when signed out. */
+export async function fetchUploads(signal?: AbortSignal): Promise<UploadsState | null> {
+  const res = await fetch(`${API}/uploads`, { credentials: "include", signal });
+  if (res.status === 401) return null;
+  return ok<UploadsState>(res);
+}
+
+/** Declare a file before sending it: its name, size and SHA-256. */
+export async function startUpload(req: { filename: string; size: number; sha256: string }): Promise<Ticket> {
+  return ok<Ticket>(await fetch(`${API}/uploads`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  }));
+}
+
+/** Say the PUT finished; the server checks the file arrived and queues it. */
+export async function completeUpload(id: string): Promise<Upload> {
+  return ok<Upload>(await fetch(`${API}/uploads/${encodeURIComponent(id)}/complete`, {
+    method: "POST",
+    credentials: "include",
+  }));
+}
+
+/** The body of a 2xx, or an Error carrying the API's own message. */
+async function ok<T>(res: Response): Promise<T> {
+  if (res.ok) return (await res.json()) as T;
+  let message = `HTTP ${res.status}`;
+  try {
+    const body = (await res.json()) as { error?: string };
+    if (body.error) message = body.error;
+  } catch {
+    // not JSON: a proxy error page; the status says enough
+  }
+  throw new Error(message);
+}
