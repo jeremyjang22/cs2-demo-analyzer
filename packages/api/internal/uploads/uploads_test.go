@@ -56,19 +56,6 @@ func TestCheck(t *testing.T) {
 	}
 }
 
-func TestParseUploaders(t *testing.T) {
-	got, err := ParseUploaders(" 76561198230376396, 76561198074762801\n")
-	if err != nil || len(got) != 2 || !got[76561198230376396] {
-		t.Errorf("got %v, %v", got, err)
-	}
-	if _, err := ParseUploaders("76561198230376396,7656119"); err == nil {
-		t.Error("a short id should be refused, not skipped")
-	}
-	if got, err := ParseUploaders(""); err != nil || len(got) != 0 {
-		t.Errorf("empty: %v, %v", got, err)
-	}
-}
-
 // fakeStorage is a bucket in a map: PresignPut "uploads" nothing, and the
 // test puts objects in directly, as a browser's PUT would.
 type fakeStorage struct{ objects map[string]int64 }
@@ -104,7 +91,9 @@ func TestUploadFlow(t *testing.T) {
 	defer db.Close()
 	for _, q := range []string{
 		`DELETE FROM demos`,
+		`DELETE FROM uploaders`,
 		`INSERT INTO users (steamid, display_name) VALUES (76561198230376396, 'me'), (76561198000000001, 'other') ON CONFLICT DO NOTHING`,
+		`INSERT INTO uploaders (steamid) VALUES (76561198230376396), (76561198000000001)`,
 	} {
 		if _, err := db.Exec(ctx, q); err != nil {
 			t.Fatal(err)
@@ -112,7 +101,7 @@ func TestUploadFlow(t *testing.T) {
 	}
 	bucket := &fakeStorage{objects: map[string]int64{}}
 	s := &Service{DB: db, Store: bucket, Cfg: Config{
-		Uploaders: map[uint64]bool{me: true, other: true}, MaxBytes: 1 << 30, DailyLimit: 3, URLTTL: time.Hour,
+		MaxBytes: 1 << 30, DailyLimit: 3, URLTTL: time.Hour,
 	}}
 	status := func(err error) int {
 		var e *Error
@@ -214,7 +203,7 @@ func TestUploadFlow(t *testing.T) {
 
 	// No bucket configured: nobody uploads, and it says why.
 	off := &Service{DB: db, Cfg: s.Cfg}
-	if off.Allowed(me) {
+	if ok, _ := off.Allowed(ctx, me); ok {
 		t.Error("allowed without storage")
 	}
 	if _, err := off.Start(ctx, me, Request{"x.dem", 1, sha("e")}); status(err) != http.StatusServiceUnavailable {

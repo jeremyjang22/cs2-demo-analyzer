@@ -161,3 +161,16 @@ CREATE TABLE workers (
     -- What it is processing now; null when idle.
     job_id     bigint
 );
+
+-- Who may upload demos through the site. Invitation-only (2026-11-26): an
+-- upload is a stranger's file parsed on the owner's PC. A row rather than the
+-- UPLOADERS variable it replaced, so inviting someone is one command
+-- (demo-catalog uploaders add) that takes effect at once, instead of an edit
+-- in Northflank and a restart. Not a reference to users, so someone can be
+-- invited before they have ever signed in.
+CREATE TABLE uploaders (
+    steamid   bigint      PRIMARY KEY,
+    -- Who they are, for whoever reads the list later: a steamid says nothing.
+    note      text,
+    added_at  timestamptz NOT NULL DEFAULT now()
+);

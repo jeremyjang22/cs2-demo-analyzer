@@ -82,4 +82,4 @@ jobs:
         # empty the demos table, so they must not run at once.
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
-        run: go test -p 1 -v -run "SaveLoad|UploadFlow|Queue|ShutdownHandsBack" ./catalog ./api/internal/uploads ./worker
+        run: go test -p 1 -v -run "SaveLoad|Uploaders|UploadFlow|Queue|ShutdownHandsBack" ./catalog ./api/internal/uploads ./worker

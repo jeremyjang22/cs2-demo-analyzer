@@ -51,7 +51,7 @@ notebook.
 | `packages/demo-export/` | Go. A demo to the web app in one step from a terminal: the build, `info.json`, optionally published. |
 | `packages/worker/`, `packages/demo-worker/` | Go. Processes uploads: claims jobs from the queue, builds each in a child process, publishes it. On the owner's PC at login. See `docs/demo-worker.md`. |
 | `packages/catalog/` | Go. The list of demos the site shows: a `demos` row each in Postgres, and `data/index.json` generated from the rows. Ports `index-demos`' measured fields; `testdata/` pins the two languages together. |
-| `packages/demo-catalog/` | Go. Command-line wrapper around catalog: list, put, set, unlist, publish. |
+| `packages/demo-catalog/` | Go. Command-line wrapper around catalog: list, put, set, unlist, publish, and who may upload. |
 | `packages/store/` | Go. The R2 bucket through its S3 API. `envfile` beside it reads `packages/api/.env` for commands. |
 | `packages/round-collector/` | Go. Command-line wrapper around the collector that writes the CSV folder alone. |
 | `packages/analytics/` | Go. Match statistics from one demo or many: weapon kills, opening kills, clutches, X-vs-Y conversion. |
@@ -105,6 +105,7 @@ go run ./demo-catalog put nukepug                # publish web/public/data/nukep
 go run ./demo-catalog set nukepug -visibility public -sample true
 go run ./demo-catalog unlist nukepug             # off the site; files stay in R2
 go run ./demo-catalog publish -dry-run           # regenerate the index, say what changes
+go run ./demo-catalog uploaders add <steamid> -note "who"   # let someone upload; at once
 CATALOG_DATA=web/public/data go test ./catalog   # Go index == index-demos' on your demos
 TEST_DATABASE_URL=<throwaway, migrated> go test ./catalog   # the SQL
 

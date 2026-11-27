@@ -44,9 +44,9 @@ type Config struct {
 	// and nothing else.
 	SteamAPIKey string
 
-	// Uploads: who may upload (UPLOADERS, steamids), how big a file
-	// (UPLOAD_MAX_BYTES, default 1 GB) and how many a day each
-	// (UPLOAD_DAILY_LIMIT, default 20). The R2 keys are read by
+	// Uploads: how big a file (UPLOAD_MAX_BYTES, default 1 GB) and how many
+	// a day each (UPLOAD_DAILY_LIMIT, default 20). Who may upload is the
+	// uploaders table, not a variable. The R2 keys are read by
 	// store.ConfigFromEnv; without them the API runs and uploads are off.
 	Uploads uploads.Config
 }
@@ -62,9 +62,6 @@ func Load() (*Config, error) {
 	}
 
 	var err error
-	if c.Uploads.Uploaders, err = uploads.ParseUploaders(os.Getenv("UPLOADERS")); err != nil {
-		return nil, err
-	}
 	if c.Uploads.MaxBytes, err = intEnv("UPLOAD_MAX_BYTES", 1<<30); err != nil {
 		return nil, err
 	}
