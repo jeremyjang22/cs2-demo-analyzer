@@ -48,6 +48,9 @@ notebook.
 | `packages/collector/` | Go. Reads a `.dem` and hands each round to a sink. The parsing core. `csvsink` writes the CSV folder; `csvsource` reads one back as the same rounds. |
 | `packages/payload/` | Go. Builds `movement.json` from rounds, as a sink — from a `.dem` or a CSV folder alike. |
 | `packages/demo-export/` | Go. A demo to the web app in one step: `movement.json`, `analytics.json`, `info.json`, optionally published. |
+| `packages/catalog/` | Go. The list of demos the site shows: a `demos` row each in Postgres, and `data/index.json` generated from the rows. Ports `index-demos`' measured fields; `testdata/` pins the two languages together. |
+| `packages/demo-catalog/` | Go. Command-line wrapper around catalog: list, put, set, unlist, publish. |
+| `packages/store/` | Go. The R2 bucket through its S3 API. `envfile` beside it reads `packages/api/.env` for commands. |
 | `packages/round-collector/` | Go. Command-line wrapper around the collector that writes the CSV folder alone. |
 | `packages/analytics/` | Go. Match statistics from one demo or many: weapon kills, opening kills, clutches, X-vs-Y conversion. |
 | `packages/demo-analytics/` | Go. Command-line wrapper around analytics. |
@@ -85,9 +88,19 @@ go run ./demo-export -visibility private -owner <steamid> -date 2026-08-14 ../da
 go run ./demo-export -kind pug -visibility public "C:/demos/1-604132bd.dem.zst"
 go run ./demo-export ../out/foo                  # re-export a parsed folder, no re-parse
 go run ./demo-export -csv ../out ../data/foo.dem # also write the CSV folder, same pass
-go run ./demo-export -upload ../data/foo.dem     # ...and publish it (npm run upload-data)
+go run ./demo-export -upload ../data/foo.dem     # ...and publish it (needs DATABASE_URL + R2_*)
 # The info flags are export_movement.py's and set-info's, with the same rules,
 # and a re-export keeps what an earlier one declared. Undeclared is private.
+
+# --- the catalogue: what the site lists, and to whom (docs/deployment.md)
+cd packages
+go run ./demo-catalog list
+go run ./demo-catalog put nukepug                # publish web/public/data/nukepug/
+go run ./demo-catalog set nukepug -visibility public -sample true
+go run ./demo-catalog unlist nukepug             # off the site; files stay in R2
+go run ./demo-catalog publish -dry-run           # regenerate the index, say what changes
+CATALOG_DATA=web/public/data go test ./catalog   # Go index == index-demos' on your demos
+CATALOG_TEST_DATABASE_URL=<throwaway, migrated> go test ./catalog   # the SQL
 
 # --- the payload checked against the Python exporter (needs parsed demos)
 PAYLOAD_GOLDEN=<folder of <demo>/movement.json from export_movement.py> \
@@ -151,9 +164,8 @@ cd packages/web
 npm test                         # vitest
 npm run typecheck                # app + Cloudflare Worker
 npm run build                    # typecheck + bundle
-npm run upload-data              # publish demo payloads to R2 (needs wrangler login)
-                                 # ^ merges into the published index, so any
-                                 #   machine can publish; --unlist <demo> removes
+npm run upload-data              # publish public/data's demos: demo-catalog put
+                                 # ^ --unlist <demo> removes one
 npm run deploy                   # build + wrangler deploy, if you ever need to
                                  # bypass CI; normally main does this for you
 
@@ -208,8 +220,9 @@ not crash anything — it just silently puts the wrong data under every heading
 after it.
 
 **Demo access is enforced by the Worker, and only in production.** Each
-demo's `info.json` declares `visibility` and `owner`; `index-demos` copies them
-into `index.json`, and `worker/access.ts` filters the index and refuses
+demo's row declares `visibility` and `owner` (from its `info.json` when first
+published, `demo-catalog set` after); the generated `index.json` carries them,
+and `worker/access.ts` filters the index and refuses
 payloads per viewer, reading the API's `sid` cookie itself with the same
 `SESSION_KEY` (a Worker secret). **Signed out, a visitor sees the samples and
 nothing else**: `public` means every signed-in account, and the Pros pages ask
@@ -226,6 +239,17 @@ credited them: m0NESY's 31-kill pug read 32 from a post-round bomb death. This
 CHANGED THE MEANING of `payload.stats`; a payload exported earlier still holds
 the old count until it is re-exported.
 
+**The database is the catalogue; `index.json` is generated.** Since November
+2026 every demo the site shows is a `demos` row, and Go regenerates
+`data/index.json` in R2 from the rows after each change (`packages/catalog`,
+`docs/uploads.md`). Never upload an `index.json` by hand: the next publish
+replaces it. The local `public/data/index.json` that `index-demos` writes is
+for local dev only. A field added to index entries goes in BOTH `measure()`
+in `demo-info.mjs` and `catalog.Measure`, and in `catalog/testdata/` -
+the shared fixture fails whichever side was forgotten. A publish refuses to
+drop a demo the published index lists unless it is being unlisted, so an
+empty or wrong `DATABASE_URL` stops instead of hiding the site.
+
 **The payload has two builders, and only one is live.** `packages/payload`
 (Go) is what `demo-export` and the coming upload worker run;
 `movement_payload.py` is frozen as the reference it was checked against. A
@@ -235,7 +259,7 @@ change to the payload goes in Go. Change the Python too only to keep
 **Changing the payload means re-exporting and re-uploading.** The web app and
 the demo data deploy separately. If you add a field to `movement.json`, the
 deployed site gets the new code immediately but keeps the old data until you
-run `npm run upload-data`. Make new fields optional in `types.ts` so an old
+publish it again (`demo-catalog put`). Make new fields optional in `types.ts` so an old
 payload degrades instead of crashing.
 
 **Supabase gives you three connection strings; use the session pooler.**
@@ -298,8 +322,9 @@ statistic, compare it to a number you already know.
 
 ## What is not built yet
 
-Uploading demos through the website. The `demos` and `jobs` tables exist in the
-schema for it, and Steam login works, but there is no upload endpoint and no
-button. Parsing is deliberately something a person runs on their own machine —
-a finished payload is 1 MB, but the recording it came from is up to 670 MB, and
-turning one into the other costs real computing time.
+Uploading demos through the website, designed in `docs/uploads.md` and built
+in phases. Phase A is done: the catalogue is in the database and Go writes R2.
+Still to come are the upload endpoints and button (C), `demo-worker` processing
+the `jobs` queue on the owner's PC, started at login (D), and the same worker
+on Northflank (E). Until then, parsing is something a person runs on their own
+machine.

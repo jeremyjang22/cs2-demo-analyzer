@@ -27,20 +27,54 @@ CREATE TYPE demo_status AS ENUM ('uploading', 'queued', 'parsing', 'ready', 'fai
 -- holding the id; 'public' is listed.
 CREATE TYPE demo_visibility AS ENUM ('private', 'link', 'public');
 
+-- What a person says the game was. Undeclared (null) is listed as "unknown".
+CREATE TYPE demo_kind AS ENUM ('pug', 'match');
+
+-- The catalogue: every demo the site can show is a row here, uploaded through
+-- the site or published by hand with demo-export. data/index.json, which the
+-- Worker reads to decide who sees what, is generated from this table and is
+-- never edited on its own (packages/catalog). See docs/uploads.md.
 CREATE TABLE demos (
     id                uuid            PRIMARY KEY DEFAULT gen_random_uuid(),
 
-    -- Content address. The dedup key: a demo uploaded twice is parsed once
-    -- ever, and the second uploader gets an instant result. Also what makes a
-    -- re-parse idempotent, since filenames are not stable identifiers.
-    sha256            char(64)        NOT NULL UNIQUE,
+    -- The demo's name on the site: data/<name>/ in storage, ?demo=<name> in
+    -- the address. Restricted to what is safe in both without escaping.
+    name              text            NOT NULL UNIQUE
+                      CHECK (name ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'),
 
-    uploaded_by       bigint          NOT NULL REFERENCES users (steamid),
-    original_filename text            NOT NULL,
-    size_bytes        bigint          NOT NULL,
+    -- Content address of the original .dem. The dedup key: a demo uploaded
+    -- twice is parsed once ever, and the second uploader gets an instant
+    -- result. Null for a demo published by hand from files without it.
+    sha256            char(64)        UNIQUE,
+
+    -- Set for uploads through the site; null for a demo published by hand.
+    uploaded_by       bigint          REFERENCES users (steamid),
+    original_filename text,
+    size_bytes        bigint,
 
     status            demo_status     NOT NULL DEFAULT 'uploading',
+
+    -- DECLARED by a person, never guessed: who may see it and what it was.
+    -- This is info.json's half of an index entry (scripts/demo-info.mjs).
     visibility        demo_visibility NOT NULL DEFAULT 'private',
+    -- Whose demo it is, a 64-bit steamid. Not a reference to users: a demo
+    -- can belong to someone who has never signed in.
+    owner             bigint,
+    kind              demo_kind,
+    event             text,
+    played_on         date,
+    title             text,
+    -- What a signed-out visitor is shown. The Worker would refuse a private
+    -- sample to exactly the people it is for, so the database refuses it.
+    sample            boolean         NOT NULL DEFAULT false,
+    CONSTRAINT demos_sample_is_public CHECK (NOT sample OR visibility = 'public'),
+
+    -- MEASURED from movement.json when it is built: the measured half of an
+    -- index entry (games, map, rounds, players, kb, seconds, score, lines),
+    -- exactly as the index carries it. Which pros are in the demo is NOT
+    -- stored: it is matched against pros.json when the index is generated, so
+    -- adding a pro lists their existing games without reprocessing.
+    summary           jsonb,
 
     -- Populated once parsing succeeds; null until then.
     map               text,

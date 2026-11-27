@@ -4,8 +4,9 @@
 SELECT * FROM demos WHERE sha256 = $1;
 
 -- name: CreateDemo :one
-INSERT INTO demos (sha256, uploaded_by, original_filename, size_bytes)
-VALUES ($1, $2, $3, $4)
+-- An upload is owned by its uploader and private until they say otherwise.
+INSERT INTO demos (name, sha256, uploaded_by, owner, original_filename, size_bytes)
+VALUES ($1, $2, $3, $3, $4, $5)
 RETURNING *;
 
 -- name: MarkDemoParsed :exec

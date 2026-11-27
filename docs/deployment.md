@@ -39,7 +39,7 @@ not cosmetic — see [Why the proxy](#why-the-proxy).
 | Database schema | yes | `atlas migrate apply` before the rollout |
 | SPA bundle | yes | `npm run build` → `dist/` → Workers assets |
 | Radar images | yes | synced from committed `assets/radar/` at build |
-| **Demo payloads** | **no** | pushed to R2 by hand: `npm run upload-data` |
+| **Demo payloads** | **no** | published by hand: `demo-export -upload` / `demo-catalog put` |
 
 Demo payloads are the deliberate exception. They are built from `.dem` files
 that never enter the repo, so CI cannot produce them and has nothing to verify
@@ -201,30 +201,47 @@ A destructive change breaks that and has to be split across two deploys:
 
 ```sh
 cd packages
-go run ./demo-export -visibility private -owner <steamid> ../data/nukepug.dem
-cd web
-npm run upload-data -- --dry-run     # see what would go
-npm run upload-data nukepug          # or omit the name for everything
-npm run upload-data -- --unlist x    # take a demo off the site
+go run ./demo-export -visibility private -owner <steamid> -upload ../data/nukepug.dem
+go run ./demo-catalog list                        # what is published, and to whom
+go run ./demo-catalog put nukepug                 # publish web/public/data/nukepug/
+go run ./demo-catalog set nukepug -visibility public -sample true
+go run ./demo-catalog unlist x                    # take a demo off the site
+go run ./demo-catalog publish -dry-run            # what the index would change
 ```
 
-`go run ./demo-export -upload ...` does both steps in one.
+`npm run upload-data [names]` and `--unlist` still work, as a wrapper over
+`demo-catalog`.
 
-**Any machine can publish.** The index describes the bucket, not one disk, so
-an upload merges into the published index: demos already there stay listed,
-and only the ones uploaded now are added or replaced. A clone with a single
-demo in `public/data` publishes that one without touching the rest. If the
-published index cannot be read the upload stops before sending anything —
-`--fresh` is for a bucket that has never had one. An unlisted demo is no
-longer served (the Worker serves only what the index lists), though its files
-stay in the bucket.
+**The database is the catalogue** (since November 2026, `docs/uploads.md`).
+Every demo the site shows is a `demos` row: its declaration (who sees it,
+what it was) and a `summary` measured from its payload. `data/index.json` is
+generated from those rows and written to R2 by Go after every change, never
+edited on its own. Publishing needs `DATABASE_URL` and an R2 API token, read
+from `packages/api/.env` (or the environment):
 
-Before uploading, check each demo's `info.json` says what you mean:
-`visibility` and `owner` decide who sees it (below), `date` orders and filters
-the tables, and `"sample": true` makes it what signed-out visitors are shown.
-`npm run set-info` writes any of these without re-exporting. `index-demos`
-refuses to build an index with an invalid one, so a typo cannot publish
-something more widely than intended.
+| Variable | What |
+|---|---|
+| `R2_ACCOUNT_ID` | the Cloudflare account id; the S3 endpoint is `<id>.r2.cloudflarestorage.com` |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | an **Account** API token (R2 → Manage API tokens), Object Read & Write, on this bucket only |
+| `R2_BUCKET` | `cs2-demo-payloads`, the bucket `wrangler.jsonc` binds |
+
+**Any machine with those can publish**, because no machine's disk is the list.
+Publishing writes the payloads first, then the row, then the index, so a demo
+is never listed before its files are there. The index is regenerated under a
+Postgres advisory lock, so two publishers cannot interleave into an index
+missing one of them, and it is **refused if it would drop a demo the published
+index lists** that is not being unlisted - an empty or wrong database cannot
+hide the site's demos. An unlisted demo is no longer served (the Worker serves
+only what the index lists), though its files stay in the bucket.
+
+A demo's declaration comes from its `info.json` on first publish. After that
+the row is the truth: a re-publish applies only what `info.json` declares and
+keeps the rest, so publishing from a machine whose `info.json` says less does
+not make a public demo private. Change a published demo with
+`demo-catalog set`; `npm run set-info` edits the local `info.json`, which is
+what local dev and the next publish read. Invalid declarations - a typo in a
+visibility, a private sample - are refused by `demo-catalog` and again by
+constraints on the table.
 
 Keys mirror local paths: `public/data/nukepug/movement.json` becomes
 `data/nukepug/movement.json` in the bucket, which is the same URL the app
@@ -235,8 +252,9 @@ difference.
 
 Each demo's `info.json` declares `visibility` (`public`, `link`, `private` —
 the same words as the `demo_visibility` enum) and `owner` (a steamid), set with
-`export_movement.py --visibility ... --owner ...` or by editing the file.
-`index-demos` copies both into `index.json`, and the Worker
+`demo-export -visibility ... -owner ...`, and is stored on the demo's row.
+Once published, `demo-catalog set` changes it. The generated `index.json`
+carries both, and the Worker
 (`worker/access.ts`) uses that one file to decide, per request:
 
 - a visitor who is not signed in sees the samples (`"sample": true`, which

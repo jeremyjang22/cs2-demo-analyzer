@@ -6,7 +6,7 @@
 //	demo-export -visibility private -owner 7656119... ../data/foo.dem
 //	demo-export -kind pug -visibility public "C:/demos/1-604132bd.dem.zst"
 //	demo-export ../out/foo                           # re-export a folder parsed earlier
-//	demo-export -upload ../data/foo.dem              # ...and publish it (npm run upload-data)
+//	demo-export -upload ../data/foo.dem              # ...and publish it to the site
 //
 // A .dem is parsed once and both files are built as the rounds stream past,
 // so nothing is written in between and memory holds one round of ticks at a
@@ -20,29 +20,31 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"time"
 
 	demoinfocs "github.com/markus-wa/demoinfocs-golang/v5/pkg/demoinfocs"
 	"github.com/markus-wa/demoinfocs-golang/v5/pkg/demoinfocs/msg"
 
 	"github.com/jeremyjang22/cs2-demo-analyzer/packages/analytics"
+	"github.com/jeremyjang22/cs2-demo-analyzer/packages/catalog"
 	"github.com/jeremyjang22/cs2-demo-analyzer/packages/collector"
 	"github.com/jeremyjang22/cs2-demo-analyzer/packages/collector/csvsink"
 	"github.com/jeremyjang22/cs2-demo-analyzer/packages/collector/csvsource"
+	"github.com/jeremyjang22/cs2-demo-analyzer/packages/envfile"
 	"github.com/jeremyjang22/cs2-demo-analyzer/packages/payload"
 )
 
 type options struct {
 	out, radar, csv string
+	env, pros       string
 	hz              float64
 	upload, quiet   bool
 	info            map[string]string
@@ -61,7 +63,9 @@ func run() error {
 	flag.StringVar(&o.radar, "radar", filepath.Join("..", "assets", "radar"), "radar overview images and .txt files")
 	flag.StringVar(&o.csv, "csv", "", "also write the round-collector CSV folder under this directory (a .dem input only)")
 	flag.Float64Var(&o.hz, "hz", payload.DefaultHz, "position samples per second")
-	flag.BoolVar(&o.upload, "upload", false, "publish the exported demos afterwards (npm run upload-data, which needs wrangler login)")
+	flag.BoolVar(&o.upload, "upload", false, "publish the exported demos afterwards, through the catalogue (see demo-catalog)")
+	flag.StringVar(&o.env, "env", filepath.Join("api", ".env"), "-upload: settings file, for DATABASE_URL and R2_* not already set")
+	flag.StringVar(&o.pros, "pros", filepath.Join("web", "src", "pros.json"), "-upload: the pro catalogue")
 	flag.BoolVar(&o.quiet, "quiet", false, "no per-round progress")
 
 	// What the demo cannot say about itself, written to info.json. The same
@@ -89,6 +93,21 @@ func run() error {
 		return err
 	}
 
+	// Connect before parsing, so a missing key fails now rather than after
+	// the minutes a batch of demos takes.
+	var publisher *catalog.Publisher
+	if o.upload {
+		if _, err := envfile.Load(o.env); err != nil {
+			return err
+		}
+		var err error
+		if publisher, err = catalog.FromEnv(context.Background(), o.pros); err != nil {
+			return fmt.Errorf("-upload: %w", err)
+		}
+		defer publisher.Close()
+		publisher.Log = os.Stdout
+	}
+
 	var names []string
 	for _, in := range flag.Args() {
 		name, err := export(in, o)
@@ -98,8 +117,14 @@ func run() error {
 		names = append(names, name)
 	}
 
-	if o.upload {
-		return upload(o.out, names)
+	if publisher != nil {
+		dirs := make([]string, len(names))
+		for i, name := range names {
+			dirs[i] = filepath.Join(o.out, name)
+		}
+		fmt.Println()
+		_, err := publisher.Put(context.Background(), dirs)
+		return err
 	}
 	return nil
 }
@@ -321,25 +346,4 @@ func writeInfo(path string, given map[string]string) error {
 		return err
 	}
 	return os.WriteFile(path, append(raw, '\n'), 0o644)
-}
-
-// upload publishes through the web package's own script, which rebuilds the
-// index and reports who each demo is visible to. It stays the one way data
-// reaches R2 until the upload worker writes there itself.
-func upload(out string, names []string) error {
-	web, err := filepath.Abs(filepath.Join(out, "..", ".."))
-	if err != nil {
-		return err
-	}
-	if _, err := os.Stat(filepath.Join(web, "package.json")); err != nil {
-		return fmt.Errorf("-upload: %s is not the web package (it publishes from <web>/public/data)", web)
-	}
-	npm, err := exec.LookPath("npm")
-	if err != nil {
-		return fmt.Errorf("-upload needs npm on PATH: %w", err)
-	}
-	cmd := exec.Command(npm, append([]string{"run", "upload-data", "--"}, names...)...)
-	cmd.Dir, cmd.Stdout, cmd.Stderr = web, os.Stdout, os.Stderr
-	fmt.Printf("\nnpm run upload-data -- %s\n", strings.Join(names, " "))
-	return cmd.Run()
 }
