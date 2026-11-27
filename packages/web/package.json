@@ -19,6 +19,7 @@
     "set-info": "node scripts/set-info.mjs"
   },
   "dependencies": {
+    "hash-wasm": "^4.12.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

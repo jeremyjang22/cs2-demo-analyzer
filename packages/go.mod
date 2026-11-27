@@ -7,6 +7,7 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/klauspost/compress v1.19.2
 	github.com/markus-wa/demoinfocs-golang/v5 v5.2.0
+	github.com/minio/minio-go/v7 v7.4.1
 )
 
 require (
@@ -25,7 +26,6 @@ require (
 	github.com/markus-wa/quickhull-go/v2 v2.2.0 // indirect
 	github.com/minio/crc64nvme v1.1.1 // indirect
 	github.com/minio/md5-simd v1.1.2 // indirect
-	github.com/minio/minio-go/v7 v7.4.1 // indirect
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect

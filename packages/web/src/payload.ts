@@ -101,3 +101,9 @@ export function loadIndex(): Promise<DemoSummary[]> {
   }
   return index;
 }
+
+/** The list fetched afresh: one of your uploads has just been published. */
+export function reloadIndex(): Promise<DemoSummary[]> {
+  index = null;
+  return loadIndex();
+}

@@ -10,12 +10,12 @@ import (
 )
 
 // Against a real, migrated, THROWAWAY database: it deletes every demo.
-// CATALOG_TEST_DATABASE_URL=postgres://...; CI points it at the Postgres the
+// TEST_DATABASE_URL=postgres://...; CI points it at the Postgres the
 // migrations workflow has just applied every migration to.
 func testDB(t *testing.T) *pgxpool.Pool {
-	url := os.Getenv("CATALOG_TEST_DATABASE_URL")
+	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
-		t.Skip("set CATALOG_TEST_DATABASE_URL to a migrated throwaway database")
+		t.Skip("set TEST_DATABASE_URL to a migrated throwaway database")
 	}
 	pool, err := pgxpool.New(context.Background(), url)
 	if err != nil {

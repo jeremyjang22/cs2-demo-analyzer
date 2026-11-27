@@ -9,7 +9,11 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
+
+	"github.com/jeremyjang22/cs2-demo-analyzer/packages/api/internal/uploads"
 )
 
 type Config struct {
@@ -39,6 +43,12 @@ type Config struct {
 	// works and a player is shown by steamid, because OpenID returns the id
 	// and nothing else.
 	SteamAPIKey string
+
+	// Uploads: who may upload (UPLOADERS, steamids), how big a file
+	// (UPLOAD_MAX_BYTES, default 1 GB) and how many a day each
+	// (UPLOAD_DAILY_LIMIT, default 20). The R2 keys are read by
+	// store.ConfigFromEnv; without them the API runs and uploads are off.
+	Uploads uploads.Config
 }
 
 func Load() (*Config, error) {
@@ -50,6 +60,20 @@ func Load() (*Config, error) {
 		WebOrigin:   strings.TrimSuffix(os.Getenv("WEB_ORIGIN"), "/"),
 		SteamAPIKey: strings.TrimSpace(os.Getenv("STEAM_API_KEY")),
 	}
+
+	var err error
+	if c.Uploads.Uploaders, err = uploads.ParseUploaders(os.Getenv("UPLOADERS")); err != nil {
+		return nil, err
+	}
+	if c.Uploads.MaxBytes, err = intEnv("UPLOAD_MAX_BYTES", 1<<30); err != nil {
+		return nil, err
+	}
+	limit, err := intEnv("UPLOAD_DAILY_LIMIT", 20)
+	if err != nil {
+		return nil, err
+	}
+	c.Uploads.DailyLimit = int(limit)
+	c.Uploads.URLTTL = time.Hour
 
 	var missing []string
 	if c.DatabaseURL == "" {
@@ -68,6 +92,18 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("missing config: %s", strings.Join(missing, ", "))
 	}
 	return c, nil
+}
+
+func intEnv(key string, fallback int64) (int64, error) {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%s must be a positive whole number, not %q", key, v)
+	}
+	return n, nil
 }
 
 func env(key, fallback string) string {

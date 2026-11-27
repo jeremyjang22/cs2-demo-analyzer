@@ -1,5 +1,5 @@
-// Command api serves the demo viewer's backend: Steam login now, uploads and
-// parsing later.
+// Command api serves the demo viewer's backend: Steam login, and taking
+// uploads into the processing queue (internal/uploads; demo-worker parses).
 //
 // One binary will eventually run both the HTTP API and the parse worker. They
 // share the collector package and the database, and splitting them into two
@@ -23,6 +23,8 @@ import (
 
 	"github.com/jeremyjang22/cs2-demo-analyzer/packages/api/internal/auth"
 	"github.com/jeremyjang22/cs2-demo-analyzer/packages/api/internal/config"
+	"github.com/jeremyjang22/cs2-demo-analyzer/packages/api/internal/uploads"
+	"github.com/jeremyjang22/cs2-demo-analyzer/packages/store"
 )
 
 const sessionTTL = 30 * 24 * time.Hour
@@ -60,7 +62,17 @@ func run(log *slog.Logger) error {
 	}
 	log.Info("database ready")
 
-	srv := &server{cfg: cfg, pool: pool, log: log}
+	// Uploads need the bucket. Without its keys the API still serves
+	// sign-in, and says uploads are unavailable rather than failing to start.
+	up := &uploads.Service{DB: pool, Cfg: cfg.Uploads}
+	if st, err := store.FromEnv(); err != nil {
+		log.Warn("uploads off", "why", err.Error())
+	} else {
+		up.Store = st
+		log.Info("uploads on", "uploaders", len(cfg.Uploads.Uploaders))
+	}
+
+	srv := &server{cfg: cfg, pool: pool, log: log, uploads: up}
 	httpSrv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           srv.routes(),
@@ -86,9 +98,10 @@ func run(log *slog.Logger) error {
 }
 
 type server struct {
-	cfg  *config.Config
-	pool *pgxpool.Pool
-	log  *slog.Logger
+	cfg     *config.Config
+	pool    *pgxpool.Pool
+	log     *slog.Logger
+	uploads *uploads.Service
 }
 
 func (s *server) routes() http.Handler {
@@ -98,6 +111,9 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /auth/steam/callback", s.steamCallback)
 	mux.HandleFunc("POST /auth/logout", s.logout)
 	mux.HandleFunc("GET /me", s.me)
+	mux.HandleFunc("GET /uploads", s.listUploads)
+	mux.HandleFunc("POST /uploads", s.startUpload)
+	mux.HandleFunc("POST /uploads/{id}/complete", s.completeUpload)
 	return s.withCORS(mux)
 }
 
@@ -221,6 +237,84 @@ func (s *server) me(w http.ResponseWriter, r *http.Request) {
 		"name":    name,
 		"avatar":  avatar,
 	})
+}
+
+// listUploads is the signed-in person's recent uploads, and whether they may
+// upload at all - what the Upload button and the status rows are drawn from.
+func (s *server) listUploads(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.session(w, r)
+	if !ok {
+		return
+	}
+	list, err := s.uploads.List(r.Context(), sess.SteamID)
+	if err != nil {
+		s.fail(w, "list uploads", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"canUpload": s.uploads.Allowed(sess.SteamID),
+		"maxBytes":  s.cfg.Uploads.MaxBytes,
+		"uploads":   list,
+	})
+}
+
+func (s *server) startUpload(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.session(w, r)
+	if !ok {
+		return
+	}
+	var req uploads.Request
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "expected {filename, size, sha256}"})
+		return
+	}
+	ticket, err := s.uploads.Start(r.Context(), sess.SteamID, req)
+	if err != nil {
+		s.fail(w, "start upload", err)
+		return
+	}
+	status := http.StatusCreated
+	if ticket.Duplicate || ticket.URL == "" {
+		status = http.StatusOK
+	}
+	s.log.Info("upload started", "steamid", sess.SteamID, "demo", ticket.Upload.Name, "duplicate", ticket.Duplicate, "bytes", req.Size)
+	writeJSON(w, status, ticket)
+}
+
+func (s *server) completeUpload(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.session(w, r)
+	if !ok {
+		return
+	}
+	u, err := s.uploads.Complete(r.Context(), sess.SteamID, r.PathValue("id"))
+	if err != nil {
+		s.fail(w, "complete upload", err)
+		return
+	}
+	s.log.Info("upload queued", "steamid", sess.SteamID, "demo", u.Name)
+	writeJSON(w, http.StatusOK, u)
+}
+
+// session is the signed-in person, or a 401 written and false.
+func (s *server) session(w http.ResponseWriter, r *http.Request) (auth.Session, bool) {
+	sess, err := auth.FromRequest(s.cfg.SessionKey, r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "not signed in"})
+		return auth.Session{}, false
+	}
+	return sess, true
+}
+
+// fail answers a refusal with its own status and message, and anything else
+// as a 500 whose detail stays in the log.
+func (s *server) fail(w http.ResponseWriter, what string, err error) {
+	var refusal *uploads.Error
+	if errors.As(err, &refusal) {
+		writeJSON(w, refusal.Status, map[string]string{"error": refusal.Msg})
+		return
+	}
+	s.log.Error(what, "err", err)
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "something went wrong; try again"})
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

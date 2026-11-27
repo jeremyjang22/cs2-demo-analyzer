@@ -969,3 +969,39 @@ table.demos { width: 100%; border-collapse: collapse; font-size: 13px; }
   background: #1d2a3a; border: 1px solid var(--ct); color: var(--ink); border-radius: 6px;
   padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer;
 }
+
+/* ---- uploads (Your demos) ---- */
+.uploads { margin-bottom: 22px; border-radius: 10px; transition: outline-color 120ms; outline: 2px dashed transparent; outline-offset: 6px; }
+.uploads.dragging { outline-color: var(--ct); }
+.upload-btn {
+  padding: 5px 12px; border-radius: 7px; cursor: pointer; font: inherit; font-size: 13px;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--line);
+}
+.upload-btn:hover:not(:disabled) { border-color: var(--muted); }
+.upload-btn:disabled { opacity: 0.5; cursor: default; }
+.upload-btn:focus-visible { outline: 2px solid var(--ct); outline-offset: 2px; }
+.upload-note { margin: 6px 0 10px; font-size: 13px; color: var(--ink-2); }
+.upload-note.error { color: #e5484d; }
+.upload-list {
+  list-style: none; margin: 8px 0 0; padding: 0;
+  border: 1px solid var(--ring); border-radius: 10px; background: var(--surface);
+}
+.upload-list li {
+  /* A fixed last column: each row is its own grid, and "Open" against
+     "393 MB" would otherwise start every row's status somewhere else. */
+  display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 2fr) 72px; gap: 12px; align-items: center;
+  padding: 9px 14px; font-size: 13px; border-top: 1px solid var(--line);
+}
+.upload-list li:first-child { border-top: 0; }
+.upload-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.upload-status { color: var(--ink-2); }
+.status-failed .upload-status { color: #e5484d; }
+.status-uploading .upload-status { color: var(--t); }
+.upload-list li > :last-child { justify-self: end; }
+.upload-open { color: var(--ink); }
+.upload-bar { width: 120px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.upload-bar > span { display: block; height: 100%; background: var(--ct); transition: width 150ms linear; }
+@media (max-width: 560px) {
+  .upload-list li { grid-template-columns: minmax(0, 1fr) 72px; }
+  .upload-list li .upload-status { grid-column: 1 / -1; grid-row: 2; }
+}
