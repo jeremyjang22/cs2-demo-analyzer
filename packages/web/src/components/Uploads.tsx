@@ -120,18 +120,18 @@ export default function Uploads({ onPublished }: { onPublished: () => void }) {
               <Progress stage={active.stage} />
             </li>
           )}
-          {rows.map((u) => <Row key={u.id} upload={u} />)}
+          {rows.map((u) => <Row key={u.id} upload={u} online={state.processing?.online ?? true} />)}
         </ul>
       )}
     </section>
   );
 }
 
-function Row({ upload: u }: { upload: Upload }) {
+function Row({ upload: u, online }: { upload: Upload; online: boolean }) {
   return (
     <li className={`status-${u.status}`}>
       <span className="upload-file" title={u.filename}>{u.name}</span>
-      <span className="upload-status">{statusText(u)}</span>
+      <span className="upload-status">{statusText(u, online)}</span>
       {u.status === "ready"
         ? <a className="upload-open" href={viewerHref(u.name)}>Open</a>
         : <span className="muted">{mb(u.size)}</span>}

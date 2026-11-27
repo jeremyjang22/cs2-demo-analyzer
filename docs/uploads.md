@@ -1,6 +1,7 @@
 # Uploading demos through the site
 
-Status: **phases A and C built** (2026-11-26); D and E to come. Decisions dated where made.
+Status: **phases A, C and D built** (2026-11-26/27); E to come. Decisions dated where made.
+Running the worker and reading its logs: docs/demo-worker.md.
 
 The goal: open the site on any machine, upload a `.dem`, and have it appear
 as a replay a minute later - processed by a worker that runs on the owner's
@@ -39,13 +40,16 @@ PC today and on Northflank later, with no code change between the two.
    size, sets `queued` and inserts a `jobs` row.
 4. **Process.** `demo-worker` claims the job with `SELECT … FOR UPDATE SKIP
    LOCKED`, so any number of workers can run against one queue and each job
-   goes to exactly one. It downloads the upload, re-hashes it against the
-   declared SHA-256, checks it is a CS2 demo (`PBDEMS2` magic, or zstd around
-   one), and runs the pipeline `demo-export` runs (`packages/payload` +
-   analytics, ~10 s a match). It writes `data/<name>/movement.json` and
-   `analytics.json`, re-stores the original as `raw/<sha256>.dem.zst`, deletes
-   `incoming/<id>`, fills the row's measured fields, marks it `ready`, and
-   republishes the index.
+   goes to exactly one. The claim is a lease, renewed every 30 s; one that
+   lapses for two minutes is claimed again. It downloads the upload, re-hashes
+   it against the declared SHA-256, checks it is a CS2 demo (`PBDEMS2` magic,
+   or zstd around one), and builds it in a child process with what
+   `demo-export` runs (`packages/export`, ~10 s a match) - a child, so a
+   parser crash or a runaway demo fails one job, not the worker. It keeps the
+   original as `raw/<sha256>.dem.zst`, then publishes `data/<name>/` and the
+   row (measured fields, `ready`) and the index, and finally deletes
+   `incoming/<id>`. Each step's time goes on the job row and the attempt's
+   whole log to `logs/jobs/<id>-<attempt>.txt`.
 5. **Show.** The row on Your demos polls its status and opens when ready.
    Uploads are private to the uploader by default.
 
@@ -81,14 +85,18 @@ through the same table, so there is one path to the site, not two.
 | Prefix | What | Served |
 |---|---|---|
 | `incoming/<id>` | an upload in flight, as the browser sent it | never |
-| `raw/<sha256>.dem.zst` | every original, zstd-compressed (~3-5× smaller) | never |
+| `raw/<sha256>.dem.zst` | every original, zstd-compressed (only ~1.3× smaller: see below) | never |
 | `data/<name>/movement.json`, `analytics.json` | the replay and its analytics | via the Worker, per `index.json` |
 | `data/index.json` | the catalogue projection | via the Worker, filtered per viewer |
+| `logs/jobs/<id>-<attempt>.txt` | one processing attempt's full log | never |
 
 2026-11-26: originals are **kept, compressed**, so any demo can be
 re-processed after a payload change without asking anyone to upload it again.
 R2's free tier is 10 GB; past that it is paid per GB, so this is the line to
-revisit first if storage grows. An R2 lifecycle rule deletes `incoming/` after
+revisit first if storage grows. Measured 2026-11-27 on the first upload: zstd
+took a 327 MB pro demo to 257 MB in 2 s - not the 3-5× this table first
+assumed, since a CS2 demo is largely compressed already. So budget ~250 MB a
+match: the free tier holds about forty. An R2 lifecycle rule deletes `incoming/` after
 a week, for uploads abandoned half way.
 
 ## Safety
@@ -98,8 +106,9 @@ An upload is a file from someone else, parsed by code on the owner's PC.
 - **Allowlist first** (2026-11-26): only listed Steam accounts can upload.
 - **Fail closed everywhere**: unknown size, hash mismatch, not a demo,
   over quota - rejected, with the reason on the row.
-- **Bounded processing**: a time limit per job, the parser's panics recovered,
-  three attempts, then `failed` with `last_error`.
+- **Bounded processing**: each demo parsed in a child process, killed at 15
+  minutes; a file that is not a demo or cannot be read fails at once, anything
+  else gets three attempts, then `failed` with `last_error`.
 - **Private by default**, owned by the uploader; nothing is listed until the
   uploader says otherwise.
 - **Keys**: the API signs upload URLs with an R2 key scoped to this one bucket;
@@ -127,7 +136,7 @@ Each one ships on its own and leaves the site working.
 |---|---|---|
 | A | Catalogue in the database: schema, `summary`, existing demos registered; Go writes payloads and `index.json` to R2 from the database (`packages/catalog`, `store`, `demo-catalog`) - **done** | nothing - publishing goes through the database |
 | C | Upload endpoints, allowlist, presigned PUTs, bucket CORS; Upload button and status rows (`api/internal/uploads`, `Uploads.tsx`) - **done** | rows reach "queued" |
-| D | `demo-worker`, started at login on the owner's PC (2026-11-26) | an upload from another machine appears on the site |
+| D | `demo-worker`, started at login on the owner's PC (`worker`, `demo-worker`, `scripts/worker/install-worker.ps1`) - **done** | an upload from another machine appears on the site |
 | E | The same binary as a Northflank service, sized from its measured memory on the 670 MB reference demo | processing without the PC |
 
 (B - giving Go R2 access - folded into A, which is the first thing to need it.)

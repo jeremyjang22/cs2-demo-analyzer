@@ -29,6 +29,11 @@ import (
 
 const sessionTTL = 30 * 24 * time.Hour
 
+// version is the commit the image was built from, set by the Dockerfile
+// (-X main.version). /health reports it, so a deploy can wait for the new
+// revision to answer rather than for any revision to.
+var version = "dev"
+
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
@@ -152,7 +157,7 @@ func (s *server) health(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "database": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "database": "ok", "version": version})
 }
 
 func (s *server) steamLogin(w http.ResponseWriter, r *http.Request) {
@@ -251,11 +256,19 @@ func (s *server) listUploads(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, "list uploads", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"canUpload": s.uploads.Allowed(sess.SteamID),
 		"maxBytes":  s.cfg.Uploads.MaxBytes,
 		"uploads":   list,
-	})
+	}
+	// Left out rather than failing the list: the rows matter more than the
+	// note about them.
+	if online, err := s.uploads.Online(r.Context()); err != nil {
+		s.log.Warn("worker status", "err", err)
+	} else {
+		body["processing"] = map[string]bool{"online": online}
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 func (s *server) startUpload(w http.ResponseWriter, r *http.Request) {

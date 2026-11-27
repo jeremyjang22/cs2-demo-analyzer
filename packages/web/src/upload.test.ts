@@ -31,6 +31,8 @@ describe("upload", () => {
     expect(statusText(up("queued"))).toBe("Queued for processing");
     expect(statusText(up("failed", "not a CS2 demo"))).toBe("Failed: not a CS2 demo");
     expect(statusText(up("uploading"))).toMatch(/again/);
+    expect(statusText(up("queued"), false)).toMatch(/offline/);
+    expect(statusText(up("parsing"), false)).toBe("Processing…");
   });
 
   it("keeps polling only while the server is still working", () => {

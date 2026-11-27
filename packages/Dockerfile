@@ -12,7 +12,9 @@ RUN go mod download
 COPY . .
 # CGO off produces a static binary, which is what lets the runtime stage be
 # a bare alpine with nothing else in it.
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/api ./api/cmd/api
+# VERSION is the commit (deploy-api passes github.sha), reported by /health.
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${VERSION}" -o /out/api ./api/cmd/api
 
 FROM alpine:3.21
 # ca-certificates is required: the Steam OpenID verification call is HTTPS, and

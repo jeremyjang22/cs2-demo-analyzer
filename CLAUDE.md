@@ -47,7 +47,9 @@ notebook.
 |---|---|
 | `packages/collector/` | Go. Reads a `.dem` and hands each round to a sink. The parsing core. `csvsink` writes the CSV folder; `csvsource` reads one back as the same rounds. |
 | `packages/payload/` | Go. Builds `movement.json` from rounds, as a sink — from a `.dem` or a CSV folder alike. |
-| `packages/demo-export/` | Go. A demo to the web app in one step: `movement.json`, `analytics.json`, `info.json`, optionally published. |
+| `packages/export/` | Go. The build itself: a demo (or a CSV folder) to `movement.json` + `analytics.json`. What both commands below run. |
+| `packages/demo-export/` | Go. A demo to the web app in one step from a terminal: the build, `info.json`, optionally published. |
+| `packages/worker/`, `packages/demo-worker/` | Go. Processes uploads: claims jobs from the queue, builds each in a child process, publishes it. On the owner's PC at login. See `docs/demo-worker.md`. |
 | `packages/catalog/` | Go. The list of demos the site shows: a `demos` row each in Postgres, and `data/index.json` generated from the rows. Ports `index-demos`' measured fields; `testdata/` pins the two languages together. |
 | `packages/demo-catalog/` | Go. Command-line wrapper around catalog: list, put, set, unlist, publish. |
 | `packages/store/` | Go. The R2 bucket through its S3 API. `envfile` beside it reads `packages/api/.env` for commands. |
@@ -91,6 +93,10 @@ go run ./demo-export -csv ../out ../data/foo.dem # also write the CSV folder, sa
 go run ./demo-export -upload ../data/foo.dem     # ...and publish it (needs DATABASE_URL + R2_*)
 # The info flags are export_movement.py's and set-info's, with the same rules,
 # and a re-export keeps what an earlier one declared. Undeclared is private.
+
+# --- uploads: the worker that processes them (docs/demo-worker.md)
+./scripts/worker/install-worker.ps1      # PowerShell: build, start at every login
+cd packages && go run ./demo-worker -once # or by hand: whatever is queued, then exit
 
 # --- the catalogue: what the site lists, and to whom (docs/deployment.md)
 cd packages
@@ -189,8 +195,11 @@ Six services. The browser only ever talks to the first one.
   `/api/*` goes to the Go server, `/data/*` comes from file storage, the rest
   is the app itself.
 - **Cloudflare R2** — file storage holding the finished `movement.json`
-  payloads. Uploaded by hand, never by CI.
+  payloads, and uploads with their kept originals. Written by `demo-export
+  -upload` and `demo-worker`, never by CI.
 - **Northflank** — runs the Go API in a container, around the clock.
+  `demo-worker`, which processes uploads, runs on the owner's PC for now
+  (a scheduled task at login) and moves here later.
 - **Supabase** — Postgres, and only Postgres: the API connects to it directly
   and none of Supabase's client libraries or its Data API are used. Currently
   just a row per person who signed in. (Moved from Neon in November 2026 over
@@ -251,7 +260,7 @@ drop a demo the published index lists unless it is being unlisted, so an
 empty or wrong `DATABASE_URL` stops instead of hiding the site.
 
 **The payload has two builders, and only one is live.** `packages/payload`
-(Go) is what `demo-export` and the coming upload worker run;
+(Go) is what `demo-export` and `demo-worker` run, through `packages/export`;
 `movement_payload.py` is frozen as the reference it was checked against. A
 change to the payload goes in Go. Change the Python too only to keep
 `TestMatchesPythonExport` meaningful, and re-run it when you do.
@@ -322,10 +331,8 @@ statistic, compare it to a number you already know.
 
 ## What is not built yet
 
-Processing uploads, designed in `docs/uploads.md` and built in phases. A (the
-catalogue in the database) and C (upload endpoints, the Upload button, status
-rows) are done: an upload from the site reaches the `jobs` queue and waits
-there. Still to come are `demo-worker`, processing that queue on the owner's
-PC and started at login (D), and the same worker on Northflank (E). Until
-then, a demo reaches the site through `demo-export -upload` on a machine with
-the keys.
+Processing uploads without the owner's PC: phase E in `docs/uploads.md`, the
+same `demo-worker` as a Northflank service, sized from its measured memory on
+the 670 MB reference demo. Until then an upload waits at "queued" while the PC
+is off, and its row says processing is offline. Also missing: changing an
+upload's visibility or kind from the site - for now `demo-catalog set`.

@@ -79,6 +79,12 @@ export interface UploadsState {
   canUpload: boolean;
   maxBytes: number;
   uploads: Upload[];
+  /**
+   * Whether a demo-worker has reported in within the last two minutes. Absent
+   * when the server could not tell, which reads as online: say nothing
+   * rather than something wrong.
+   */
+  processing?: { online: boolean };
 }
 
 /** Where to PUT the file, or - for a file already known by its hash - the demo it already is. */
