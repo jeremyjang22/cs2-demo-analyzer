@@ -129,12 +129,35 @@ CREATE TABLE jobs (
     attempts   integer     NOT NULL DEFAULT 0,
     last_error text,
     locked_at  timestamptz,
+    -- The worker running it: workers.name.
     locked_by  text,
     created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
+    updated_at timestamptz NOT NULL DEFAULT now(),
+
+    -- The latest attempt: when it started and ended, and how long each step
+    -- took in milliseconds ({"download": 8123, "process": 10950, ...}). So
+    -- "why was that one slow" is a query, wherever the worker ran. The
+    -- attempt's full log is in the bucket at logs/jobs/<id>-<attempt>.txt.
+    started_at  timestamptz,
+    finished_at timestamptz,
+    steps       jsonb
 );
 
 -- The claim query orders by this; partial index keeps it to live work only.
 CREATE INDEX jobs_claimable_idx ON jobs (created_at) WHERE state = 'queued';
 CREATE UNIQUE INDEX jobs_one_live_per_demo_idx ON jobs (demo_id)
     WHERE state IN ('queued', 'running');
+
+-- Every demo-worker that has run, and when it was last alive. A worker
+-- reports in every 30 seconds while it runs, so "nobody has reported in for
+-- two minutes" is how the site knows an upload is waiting on a machine that
+-- is off (the owner's PC asleep) rather than on a slow parse.
+CREATE TABLE workers (
+    -- The machine's host name: one row per machine, however often it restarts.
+    name       text        PRIMARY KEY,
+    version    text        NOT NULL,
+    started_at timestamptz NOT NULL,
+    seen_at    timestamptz NOT NULL,
+    -- What it is processing now; null when idle.
+    job_id     bigint
+);

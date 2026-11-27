@@ -39,11 +39,15 @@ export function mb(bytes: number): string {
   return bytes >= 100 << 20 ? `${Math.round(bytes / 2 ** 20)} MB` : `${(bytes / 2 ** 20).toFixed(1)} MB`;
 }
 
-/** A server status as its row says it. */
-export function statusText(u: Upload): string {
+/**
+ * A server status as its row says it. Offline is no worker running anywhere:
+ * the owner's PC is off, and a queued demo waits for it rather than for a
+ * slow parse.
+ */
+export function statusText(u: Upload, online = true): string {
   switch (u.status) {
     case "uploading": return "Not finished - upload the file again";
-    case "queued": return "Queued for processing";
+    case "queued": return online ? "Queued for processing" : "Queued - processing is offline, and starts when it is back";
     case "parsing": return "Processing…";
     case "ready": return "Ready";
     case "failed": return u.error ? `Failed: ${u.error}` : "Failed";

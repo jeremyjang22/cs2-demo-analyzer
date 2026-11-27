@@ -18,6 +18,7 @@ on:
       # The API imports these too: the bucket, and demo names.
       - "packages/store/**"
       - "packages/catalog/**"
+      - "packages/worker/**"
       - "packages/go.mod"
       - "packages/go.sum"
       - "packages/Dockerfile"
@@ -83,6 +84,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -142,7 +144,9 @@ jobs:
         # Northflank returns as soon as it has accepted the rollout, which is
         # not the same as the new container serving. Poll /health so a failed
         # boot — a bad connection string, a missing secret — shows up as a red
-        # deploy here instead of as 502s later.
+        # deploy here instead of as 502s later. It must be THIS commit
+        # answering: the old revision keeps serving, healthy, until the new
+        # one takes over, and on 2026-11-27 this check passed against it.
         run: |
           if [ -z "$API_HEALTH_URL" ]; then
             echo "API_HEALTH_URL not set; skipping the post-deploy check"; exit 0
@@ -150,10 +154,10 @@ jobs:
           for i in $(seq 1 30); do
             body=$(curl -fsS --max-time 10 "$API_HEALTH_URL" 2>/dev/null || true)
             case "$body" in
-              *'"database":"ok"'*) echo "healthy: $body"; exit 0 ;;
+              *'"database":"ok"'*'"version":"'"$GITHUB_SHA"'"'*) echo "healthy: $body"; exit 0 ;;
             esac
             echo "attempt $i: not ready yet"
             sleep 10
           done
-          echo "::error::the API never reported healthy after 5 minutes"
+          echo "::error::the API never reported healthy at $GITHUB_SHA after 5 minutes (last answer: $body)"
           exit 1

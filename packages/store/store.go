@@ -2,8 +2,8 @@
 // through R2's S3-compatible API.
 //
 // The Worker reads the same bucket through its binding (wrangler.jsonc); this
-// is the other door in, for Go: demo-catalog and demo-export publish through
-// it, and the upload worker will. Keys are the published paths -
+// is the other door in, for Go: demo-catalog, demo-export and demo-worker
+// publish through it. Keys are the published paths -
 // data/<name>/movement.json is served at /data/<name>/movement.json - so a key
 // written here is a URL on the site, and nothing translates between the two.
 //
@@ -66,6 +66,23 @@ func ConfigFromEnv() (Config, error) {
 	return c, nil
 }
 
+// The bucket's layout, beyond the served data/ prefix. None of these is ever
+// served: the Worker serves data/ alone. docs/uploads.md has the table.
+
+// IncomingKey is where an upload lands, as the browser sent it, until the
+// worker has processed it. A lifecycle rule deletes what is left after a week.
+func IncomingKey(demoID string) string { return "incoming/" + demoID }
+
+// RawKey is where an original is kept, zstd-compressed, so any demo can be
+// processed again after a change to the payload. Named by content, so the
+// same file uploaded twice is stored once.
+func RawKey(sha256 string) string { return "raw/" + sha256 + ".dem.zst" }
+
+// JobLogKey is the full log of one attempt at one processing job.
+func JobLogKey(jobID int64, attempt int) string {
+	return fmt.Sprintf("logs/jobs/%d-%d.txt", jobID, attempt)
+}
+
 // Store is one bucket.
 type Store struct {
 	client *minio.Client
@@ -119,6 +136,30 @@ func (s *Store) Get(ctx context.Context, key string) ([]byte, error) {
 		return nil, s.wrap("get", key, err)
 	}
 	return b, nil
+}
+
+// GetTo streams an object into w and returns its length - for an upload of
+// hundreds of megabytes, which Get would hold in memory whole.
+func (s *Store) GetTo(ctx context.Context, key string, w io.Writer) (int64, error) {
+	obj, err := s.client.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
+	if err != nil {
+		return 0, s.wrap("get", key, err)
+	}
+	defer obj.Close()
+	n, err := io.Copy(w, obj)
+	if err != nil {
+		return n, s.wrap("get", key, err)
+	}
+	return n, nil
+}
+
+// PutFile writes the file at path under key, streaming it (in parts, when it
+// is large) rather than reading it into memory.
+func (s *Store) PutFile(ctx context.Context, key, path, contentType string) error {
+	if _, err := s.client.FPutObject(ctx, s.bucket, key, path, minio.PutObjectOptions{ContentType: contentType}); err != nil {
+		return fmt.Errorf("put %s: %w", key, err)
+	}
+	return nil
 }
 
 // Exists reports whether key is in the bucket.

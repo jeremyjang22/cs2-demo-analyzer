@@ -146,14 +146,14 @@ func TestUploadFlow(t *testing.T) {
 	if _, err := s.Complete(ctx, me, tk.Upload.ID); status(err) != http.StatusConflict {
 		t.Errorf("not arrived: %v", err)
 	}
-	bucket.objects[IncomingKey(tk.Upload.ID)] = 999
+	bucket.objects[store.IncomingKey(tk.Upload.ID)] = 999
 	if _, err := s.Complete(ctx, me, tk.Upload.ID); status(err) != http.StatusConflict {
 		t.Errorf("short: %v", err)
 	}
 	if _, err := s.Complete(ctx, other, tk.Upload.ID); status(err) != http.StatusNotFound {
 		t.Errorf("someone else's upload: %v", err)
 	}
-	bucket.objects[IncomingKey(tk.Upload.ID)] = 1000
+	bucket.objects[store.IncomingKey(tk.Upload.ID)] = 1000
 	u, err := s.Complete(ctx, me, tk.Upload.ID)
 	if err != nil || u.Status != "queued" {
 		t.Fatalf("complete: %+v, %v", u, err)
@@ -196,6 +196,20 @@ func TestUploadFlow(t *testing.T) {
 	list, err := s.List(ctx, me)
 	if err != nil || len(list) != 3 || list[0].Name != "third" {
 		t.Errorf("list: %+v, %v", list, err)
+	}
+
+	// Processing is online while a worker has reported in lately.
+	db.Exec(ctx, `DELETE FROM workers`)
+	if on, err := s.Online(ctx); err != nil || on {
+		t.Errorf("no workers: online=%v, %v", on, err)
+	}
+	db.Exec(ctx, `INSERT INTO workers (name, version, started_at, seen_at) VALUES ('pc', 'v', now(), now() - interval '10 minutes')`)
+	if on, _ := s.Online(ctx); on {
+		t.Error("a worker silent for ten minutes counts as online")
+	}
+	db.Exec(ctx, `UPDATE workers SET seen_at = now() - interval '20 seconds'`)
+	if on, _ := s.Online(ctx); !on {
+		t.Error("a worker seen 20s ago counts as offline")
 	}
 
 	// No bucket configured: nobody uploads, and it says why.

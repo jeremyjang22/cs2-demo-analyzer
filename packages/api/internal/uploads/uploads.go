@@ -25,6 +25,7 @@ import (
 
 	"github.com/jeremyjang22/cs2-demo-analyzer/packages/catalog"
 	"github.com/jeremyjang22/cs2-demo-analyzer/packages/store"
+	"github.com/jeremyjang22/cs2-demo-analyzer/packages/worker"
 )
 
 // Storage is what uploads needs of the bucket: *store.Store, or a fake in
@@ -269,17 +270,13 @@ func (s *Service) bySHA(ctx context.Context, sha string) (*Upload, uint64, error
 }
 
 func (s *Service) ticket(ctx context.Context, u Upload, size int64) (Ticket, error) {
-	url, err := s.Store.PresignPut(ctx, IncomingKey(u.ID), size, s.Cfg.URLTTL)
+	url, err := s.Store.PresignPut(ctx, store.IncomingKey(u.ID), size, s.Cfg.URLTTL)
 	if err != nil {
 		return Ticket{}, err
 	}
 	expires := time.Now().Add(s.Cfg.URLTTL).UTC().Truncate(time.Second)
 	return Ticket{Upload: u, URL: url, Expires: &expires}, nil
 }
-
-// IncomingKey is where an upload lands before it is processed. Never served:
-// the Worker reads only data/.
-func IncomingKey(id string) string { return "incoming/" + id }
 
 // Complete is the browser saying the PUT finished. The file is checked to be
 // there at the declared size, and the demo is queued. Saying so twice is
@@ -299,7 +296,7 @@ func (s *Service) Complete(ctx context.Context, steamid uint64, id string) (Uplo
 		return u, nil
 	}
 
-	size, err := s.Store.Size(ctx, IncomingKey(u.ID))
+	size, err := s.Store.Size(ctx, store.IncomingKey(u.ID))
 	if errors.Is(err, store.ErrNotFound) {
 		return Upload{}, refuse(http.StatusConflict, "the file has not arrived; upload it again")
 	}
@@ -346,6 +343,17 @@ func (s *Service) List(ctx context.Context, steamid uint64) ([]Upload, error) {
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// Online reports whether any demo-worker has reported in within a lease's
+// length - whether a queued upload will start shortly, or is waiting for a
+// machine that is off. The site says which, so a demo stuck at "queued"
+// overnight is explained rather than mysterious.
+func (s *Service) Online(ctx context.Context) (bool, error) {
+	var online bool
+	err := s.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM workers WHERE seen_at > now() - make_interval(secs => $1))`,
+		worker.LeaseFor.Seconds()).Scan(&online)
+	return online, err
 }
 
 // ParseUploaders reads the allowlist: steamids separated by commas or

@@ -8,15 +8,12 @@
 //	demo-export ../out/foo                           # re-export a folder parsed earlier
 //	demo-export -upload ../data/foo.dem              # ...and publish it to the site
 //
-// A .dem is parsed once and both files are built as the rounds stream past,
-// so nothing is written in between and memory holds one round of ticks at a
-// time. -csv also writes the round-collector CSV folder from the same pass,
-// for notebooks. A folder is read back with csvsource and gives exactly the
-// payload the .dem would have.
+// The building is package export, which demo-worker runs for uploads. -csv
+// also writes the round-collector CSV folder from the same pass, for
+// notebooks.
 //
 // This replaced four steps - round-collector, export_movement.py,
-// demo-analytics -web, upload-data - and is the code the upload worker will
-// run, which is why the payload is built in Go now.
+// demo-analytics -web, upload-data.
 package main
 
 import (
@@ -30,15 +27,9 @@ import (
 	"regexp"
 	"time"
 
-	demoinfocs "github.com/markus-wa/demoinfocs-golang/v5/pkg/demoinfocs"
-	"github.com/markus-wa/demoinfocs-golang/v5/pkg/demoinfocs/msg"
-
-	"github.com/jeremyjang22/cs2-demo-analyzer/packages/analytics"
 	"github.com/jeremyjang22/cs2-demo-analyzer/packages/catalog"
-	"github.com/jeremyjang22/cs2-demo-analyzer/packages/collector"
-	"github.com/jeremyjang22/cs2-demo-analyzer/packages/collector/csvsink"
-	"github.com/jeremyjang22/cs2-demo-analyzer/packages/collector/csvsource"
 	"github.com/jeremyjang22/cs2-demo-analyzer/packages/envfile"
+	"github.com/jeremyjang22/cs2-demo-analyzer/packages/export"
 	"github.com/jeremyjang22/cs2-demo-analyzer/packages/payload"
 )
 
@@ -110,7 +101,7 @@ func run() error {
 
 	var names []string
 	for _, in := range flag.Args() {
-		name, err := export(in, o)
+		name, err := exportOne(in, o)
 		if err != nil {
 			return fmt.Errorf("%s: %w", in, err)
 		}
@@ -129,169 +120,26 @@ func run() error {
 	return nil
 }
 
-// export writes one demo's folder and returns its name.
-func export(in string, o options) (string, error) {
-	start := time.Now()
-	st, err := os.Stat(in)
-	if err != nil {
-		return "", err
+// exportOne writes one demo's folder, and its info.json, and returns its name.
+func exportOne(in string, o options) (string, error) {
+	opts := export.Options{Radar: o.radar, Hz: o.hz, CSV: o.csv}
+	if !o.quiet {
+		opts.Progress = os.Stdout
 	}
-
-	var (
-		name    string
-		builder *payload.Builder
-		match   *analytics.Match
-	)
-	if st.IsDir() {
-		f, err := csvsource.Open(in)
-		if err != nil {
-			return "", err
-		}
-		name = filepath.Base(filepath.Clean(in))
-		builder = payload.NewBuilder(name, o.radar, o.hz)
-		builder.SetMap(f.Manifest.Map)
-		builder.SetTickRate(f.Manifest.TickRate)
-		match = &analytics.Match{Name: name, Map: f.Manifest.Map, TickRate: f.Manifest.TickRate, Names: f.Names}
-		if err := f.Run(&both{builder, match, o.quiet}); err != nil {
-			return "", err
-		}
-	} else {
-		if !collector.IsDemoFile(in) {
-			return "", errors.New("not a .dem, a .dem.zst or a parsed folder")
-		}
-		name = collector.DemoName(in)
-		builder = payload.NewBuilder(name, o.radar, o.hz)
-		match = &analytics.Match{Name: name}
-		if err := parse(in, o, builder, match); err != nil {
-			return "", err
-		}
-	}
-
-	p, err := builder.Finish(match.Names)
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Join(o.out, name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	raw, err := json.Marshal(p)
-	if err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(filepath.Join(dir, "movement.json"), raw, 0o644); err != nil {
-		return "", err
-	}
-	if err := analytics.WriteGame(o.out, match, nil); err != nil {
-		return "", err
-	}
-	if err := writeInfo(filepath.Join(dir, "info.json"), o.info); err != nil {
-		return "", err
-	}
-
-	fmt.Printf("%s: %s, %d rounds, %d players, %d KB, %.1fs -> %s\n",
-		name, p.Map, p.Demos[0].Rounds, len(p.Players), len(raw)/1024, time.Since(start).Seconds(), dir)
-	return name, nil
-}
-
-// parse runs the collector over a .dem, feeding the payload and the analytics
-// (and the CSV folder, with -csv) from the one pass.
-func parse(path string, o options, builder *payload.Builder, match *analytics.Match) error {
-	f, err := collector.OpenDemo(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	parser := demoinfocs.NewParser(f)
-	defer parser.Close()
-
-	sinks := multi{&both{builder, match, o.quiet}}
-	var csv *csvsink.Sink
 	if o.csv != "" {
-		csv, err = csvsink.New(filepath.Join(o.csv, collector.DemoName(path)), csvsink.Meta{
-			DemoFile: filepath.Base(path), TickRate: parser.TickRate(),
-		})
-		if err != nil {
-			return err
-		}
-		sinks = append(sinks, csv)
-	}
-
-	parser.RegisterNetMessageHandler(func(m *msg.CDemoFileHeader) {
-		match.Map = m.GetMapName()
-		builder.SetMap(match.Map)
-		if csv != nil {
-			csv.SetMap(match.Map)
-		}
-	})
-	c := collector.New(parser, sinks)
-	// parser.TickRate() is unusable before parsing starts; ServerInfo carries
-	// the real value, the same source round-collector records.
-	parser.RegisterNetMessageHandler(func(m *msg.CSVCMsg_ServerInfo) {
-		if interval := m.GetTickInterval(); interval > 0 {
-			rate := 1 / float64(interval)
-			match.TickRate = rate
-			builder.SetTickRate(rate)
-			c.SetTickRate(rate)
-			if csv != nil {
-				csv.SetTickRate(rate)
-			}
-		}
-	})
-
-	runErr := c.Run()
-	match.Names = c.Names()
-	if csv != nil {
-		// The collector never closes its sink, and Close is what writes the
-		// manifest - the file that makes the folder readable at all.
-		if err := errors.Join(csv.Players(match.Names), csv.Close()); err != nil {
-			return err
+		if st, err := os.Stat(in); err == nil && st.IsDir() {
+			opts.CSV = "" // a folder is already the CSVs
 		}
 	}
-	// A recording that stops mid-stream is still every round up to that
-	// point, and most recordings end that way.
-	if runErr != nil && !errors.Is(runErr, demoinfocs.ErrUnexpectedEndOfDemo) {
-		return runErr
+	r, err := export.Write(in, o.out, "", opts)
+	if err != nil {
+		return "", err
 	}
-	return nil
-}
-
-// both feeds each round to the payload and keeps the three small parts the
-// analytics read, letting the ticks go.
-type both struct {
-	builder *payload.Builder
-	match   *analytics.Match
-	quiet   bool
-}
-
-func (b *both) Round(r *collector.Round) error {
-	if !b.quiet {
-		fmt.Printf("  round %2d  %6d ticks\n", r.Meta.Number, len(r.Ticks))
+	if err := writeInfo(filepath.Join(r.Dir, "info.json"), o.info); err != nil {
+		return "", err
 	}
-	b.match.Rounds = append(b.match.Rounds, analytics.Round{Meta: r.Meta, Kills: r.Kills, Bomb: r.Bomb})
-	return b.builder.Round(r)
-}
-
-func (b *both) Close() error { return b.builder.Close() }
-
-// multi is several sinks fed the same rounds.
-type multi []collector.Sink
-
-func (m multi) Round(r *collector.Round) error {
-	for _, s := range m {
-		if err := s.Round(r); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (m multi) Close() error {
-	var errs []error
-	for _, s := range m {
-		errs = append(errs, s.Close())
-	}
-	return errors.Join(errs...)
+	fmt.Println(r)
+	return r.Name, nil
 }
 
 var (
