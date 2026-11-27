@@ -21,7 +21,8 @@ type Collector struct {
 	vel    *velocityTracker
 
 	// matchStarted gates out warmup and the false-positive RoundStart at tick 0.
-	// Strategy proven in playground/go/cmd/hello-demo.
+	// Set by begin_new_match or the match-start announcement, whichever
+	// comes first - see register.
 	matchStarted bool
 
 	names     map[uint64]string
@@ -187,6 +188,16 @@ func (c *Collector) tick() int32 {
 }
 
 func (c *Collector) register() {
+	// Either event starts the match. begin_new_match (MatchStart) fires just
+	// before round 1's RoundStart; the announcement fires at the END of a
+	// round's freezetime. Gating on the announcement alone lost round 1 of
+	// tournament demos (faze-vs-spirit-m2-cache, 2026-11-27): there it comes
+	// a minute into round 1, which was dropped as if it were warmup. Pugs got
+	// away with it only because theirs fires during a stray round recorded
+	// before the warmup.
+	c.parser.RegisterEventHandler(func(events.MatchStart) {
+		c.matchStarted = true
+	})
 	c.parser.RegisterEventHandler(func(events.AnnouncementMatchStarted) {
 		c.matchStarted = true
 	})
